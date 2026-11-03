@@ -1,7 +1,7 @@
 import { WhopClient } from "@whop/sdk";
 import { unstable_cache } from "next/cache";
 import { calculateLeadQuote, requestedLeadCount, type LeadQuote } from "@/lib/lead-pricing";
-import { getTopUpPlan } from "@/lib/whop-plans";
+import { getLeadCheckout } from "@/lib/lead-checkout";
 
 import { effectiveForceUsd, requestedPaymentMode } from "@/lib/payment-methods";
 import { readRateCard } from "@/lib/pricing-store";
@@ -10,11 +10,10 @@ export const runtime = "nodejs";
 
 // Share successful plan lookups across requests and function cold starts. Credentials
 // stay inside the resolver; the cache contains only the public plan ID for this price.
-const resolvePlanId = unstable_cache(async (accountId: string, productId: string, quote: LeadQuote, forceUsd: boolean) => {
+const resolveCheckout = unstable_cache(async (accountId: string, productId: string, quote: LeadQuote, forceUsd: boolean) => {
   const whop = new WhopClient({ token: process.env.WHOP_API_KEY! });
-  const plan = await getTopUpPlan(whop, accountId, productId, quote, forceUsd);
-  return plan.id;
-}, ["loudr-lead-checkout-payment-modes-v1"], { revalidate: 300 });
+  return getLeadCheckout(whop, accountId, productId, quote, forceUsd);
+}, ["loudr-lead-checkout-native-quantity-v1"], { revalidate: 300 });
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -54,8 +53,8 @@ export async function POST(request: Request) {
     return Response.json({ error: "Payments are temporarily unavailable. Please try again later." }, { status: 503 });
   }
   try {
-    const planId = await resolvePlanId(accountId, productId, quote, forceUsd);
-    return Response.json({ planId, quote, forceUsd, paymentMode, priceVersion: card.version }, { headers: { "Cache-Control": "no-store" } });
+    const checkout = await resolveCheckout(accountId, productId, quote, forceUsd);
+    return Response.json({ ...checkout, quote, forceUsd, paymentMode, priceVersion: card.version }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const err = error as { error?: { message?: string }; message?: string };
     return Response.json({ error: err?.error?.message ?? err?.message ?? "Unable to load payment options." }, { status: 502 });

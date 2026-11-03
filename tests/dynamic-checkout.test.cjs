@@ -10,6 +10,7 @@ const planHelpers = loadTypeScript('lib/whop-plans.ts', {
   '@/lib/lead-pricing': leads,
   '@/lib/payment-methods': preferences,
 });
+const checkoutHelpers = loadTypeScript('lib/lead-checkout.ts', { '@/lib/payment-methods': preferences });
 const env = {
   WHOP_API_KEY: 'test-key', WHOP_ACCOUNT_ID: 'biz_test',
   WHOP_LEADS_PRODUCT_ID: 'prod_test', NEXT_PUBLIC_SITE_URL: 'https://example.com',
@@ -34,7 +35,7 @@ function harness() {
       list: async () => { calls.lists++; return savedPlans; },
       create: async (input, options) => {
         calls.creates.push({ input, options });
-        const plan = { ...input, id: `plan_${savedPlans.length + 1}`, account: { id: input.account_id }, product: { id: input.product_id } };
+        const plan = { ...input, ...options.additionalBodyParameters, id: `plan_${savedPlans.length + 1}`, account: { id: input.account_id }, product: { id: input.product_id } };
         savedPlans.push(plan);
         return plan;
       },
@@ -46,7 +47,7 @@ function harness() {
   };
   const dependencies = {
     '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences,
-    '@/lib/whop-plans': planHelpers,
+    '@/lib/whop-plans': planHelpers, '@/lib/lead-checkout': checkoutHelpers,
     '@/lib/pricing-store': {
       readRateCard: async () => {
         calls.reads++;
@@ -101,7 +102,7 @@ test('saved rates override defaults in checkout and payment metadata using integ
   assert.equal(order.quote.totalCents, 5997);
   assert.equal(order.quote.total, 59.97);
   assert.equal(order.priceVersion, 'saved-1');
-  assert.equal(h.calls.creates[0].input.initial_price, 59.97);
+  assert.equal(h.calls.creates[0].input.initial_price, 19.99);
   assert.equal((await h.pay(paymentRequest(order, { total: 1, unitPrice: 1 }))).status, 200);
   assert.equal(h.calls.payments[0].metadata.price_per_lead, '19.99');
   assert.equal(h.calls.payments[0].metadata.total_amount, '59.97');
@@ -136,18 +137,19 @@ test('increased and reduced prices bypass old cached plans and old plans cannot 
     assert.equal((await h.pay(paymentRequest(current))).status, 200);
     previous = current;
   }
-  assert.equal(h.calls.lists, 3, 'each distinct rate should resolve its own plan exactly once');
+  assert.equal(h.calls.creates.length, 3, 'each distinct rate should create one unit plan');
   assert.equal(h.calls.creates.length, 3);
   assert.equal(new Set(h.calls.creates.map(({ options }) => options.idempotencyKey)).size, 3);
 });
 
-test('cached plans remain specific to state and quantity even when monetary totals match', async () => {
+test('unit plans remain specific to state and reuse the same price for different quantities', async () => {
   const h = harness();
   const alabama = await checkout(h, 'AL', 1);
   const alaska = await checkout(h, 'AK', 1);
   const doubled = await checkout(h, 'AL', 2);
   assert.notEqual(alabama.planId, alaska.planId);
-  assert.notEqual(alabama.planId, doubled.planId);
+  assert.equal(alabama.planId, doubled.planId);
+  assert.equal(doubled.items[0].quantity, 2);
   assert.equal(alabama.quote.total, alaska.quote.total);
   assert.equal((await checkout(h, 'AL', 1)).planId, alabama.planId);
   assert.equal(h.calls.lists, 3);
@@ -224,7 +226,7 @@ test('card and bank cached plans remain distinct and preserve current saved rate
   assert.notEqual(bank.planId, card.planId);
   assert.equal((await checkout(h, 'TX', 3, { paymentMode: 'card' })).planId, card.planId);
   assert.equal((await checkout(h, 'TX', 3, { paymentMode: 'bank' })).planId, bank.planId);
-  assert.equal(h.calls.creates.length, 2);
+  assert.equal(h.calls.creates.length, 3);
   assert.equal((await h.pay(paymentRequest(card, { paymentMode: 'bank' }))).status, 400);
   assert.equal((await h.pay(paymentRequest(bank, { paymentMode: 'card' }))).status, 400);
   assert.equal(h.calls.payments.length, 0);

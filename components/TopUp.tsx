@@ -9,6 +9,7 @@ import { calculateLeadQuote, MAX_LEAD_QUANTITY, leadMetadata, type LeadQuote } f
 import { isValidLeadCount } from "@/lib/leads";
 import LeadSelector from "@/components/LeadSelector";
 import type { RateCard } from "@/lib/rate-card";
+import type { LeadCheckoutItem } from "@/lib/lead-checkout";
 import type { PaymentMode } from "@/lib/payment-methods";
 
 const appearance = {
@@ -44,6 +45,7 @@ export default function TopUp() {
   const [step, setStep] = useState<"amount" | "payment">("amount");
   const [touched, setTouched] = useState(false);
   const [orderId, setOrderId] = useState("");
+  const [checkoutItems, setCheckoutItems] = useState<LeadCheckoutItem[]>([]);
   const [planId, setPlanId] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -72,6 +74,14 @@ export default function TopUp() {
       response.quote?.currency !== "usd" || response.forceUsd !== forceUsd) {
       throw new Error(response.error || "We couldn’t load payment options. Please try again.");
     }
+    const items = response.items as LeadCheckoutItem[];
+    if (!Array.isArray(items) || items.length !== (quote.feeCents > 0 ? 2 : 1) ||
+      items[0]?.plan !== response.planId || items[0]?.quantity !== quote.leadCount ||
+      (quote.feeCents > 0 && (items[1]?.plan !== response.feePlanId || items[1]?.quantity !== 1)) ||
+      items.some((item) => typeof item.plan !== "string" || !/^plan_[a-zA-Z0-9]+$/.test(item.plan))) {
+      throw new Error("We couldn’t confirm the items in your order. Please try again.");
+    }
+    setCheckoutItems(items);
     return response.planId as string;
   }
   const inputRef = useRef<HTMLInputElement>(null);
@@ -276,7 +286,7 @@ export default function TopUp() {
                   <p className="form-error">{elementError}</p>
                   <button className="text-button" type="button" onClick={() => { setElementError(null); setCheckoutLoading(true); setCheckoutVersion((version) => version + 1); }}>Reload checkout</button>
                 </div>}
-                <Checkout key={`${planId}:${checkoutVersion}`} plan={planId}
+                <Checkout key={`${JSON.stringify(checkoutItems)}:${checkoutVersion}`} items={checkoutItems}
                   metadata={checkoutMetadata}
                   returnUrl={`${siteUrl}/checkout/return?order=${orderId}`}
                   onLoadingChange={setCheckoutLoading}

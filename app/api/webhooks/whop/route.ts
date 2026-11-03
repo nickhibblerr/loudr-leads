@@ -1,50 +1,43 @@
-import { waitUntil } from "@vercel/functions";
+import { WhopClient } from "@whop/sdk";
 import { unwrapWebhook } from "@whop/sdk/helpers";
+import { paidLeadOrder, slackOrderMessage } from "@/lib/paid-lead-order";
+import { recordPaidOrder } from "@/lib/paid-order-store";
+import { deliverSlackOrder } from "@/lib/slack-order-delivery";
 
 export const runtime = "nodejs";
-
-async function recordPayment(payment: Record<string, unknown>) {
-  const metadata = payment.metadata as Record<string, unknown> | null | undefined;
-  // TODO: Lead fulfillment must retrieve the payment and its associated plan,
-  // verify server-authored state/count/unit-price metadata and account/product,
-  // and deduplicate by payment.id. Checkout metadata can be buyer-controlled.
-  // This handler currently logs only; it does not deliver leads or credit balances.
-  // This verified webhook is the only trusted place to credit the client's
-  // balance. Replace this log with a durable ledger transaction, deduplicated by
-  // payment.id, that verifies the USD amount/account and links a known client.
-  // Whop retries webhooks: make that transaction idempotent before going live.
-  // Never credit a balance from query parameters or from the return page.
-  console.log("Verified payment received", {
-    source: metadata?.source,
-    state: metadata?.state,
-    state_name: metadata?.state_name,
-    quantity: metadata?.quantity,
-    price_per_lead: metadata?.price_per_lead,
-    payment_id: payment.id,
-    order_id: metadata?.order_id,
-    currency: metadata?.currency,
-    total_amount: metadata?.total_amount,
-    customer_email: payment.customer_email,
-  });
-}
 
 export async function POST(request: Request) {
   const key = process.env.WHOP_WEBHOOK_SECRET;
   if (!key) return Response.json({ error: "Webhook is not configured." }, { status: 503 });
-
   const payload = await request.text();
   let event;
+  try { event = unwrapWebhook(payload, { headers: Object.fromEntries(request.headers), key }); }
+  catch { return Response.json({ error: "Invalid webhook signature." }, { status: 400 }); }
+  if (event.type !== "payment.succeeded") return Response.json({ received: true });
+  const paymentId = (event.data as { id?: unknown }).id;
+  if (typeof paymentId !== "string" || !/^pay_[a-zA-Z0-9]+$/.test(paymentId)) return Response.json({ error: "Invalid payment event." }, { status: 400 });
+  const accountId = process.env.WHOP_ACCOUNT_ID;
+  const productId = process.env.WHOP_LEADS_PRODUCT_ID;
+  if (!accountId || !productId || !process.env.WHOP_API_KEY) {
+    return Response.json({ error: "Payment notifications are not configured." }, { status: 503 });
+  }
   try {
-    event = unwrapWebhook(payload, {
-      headers: Object.fromEntries(request.headers),
-      key,
-    });
+    const whop = new WhopClient({ token: process.env.WHOP_API_KEY });
+    const payment = await whop.payments.retrieve({ id: paymentId });
+    if (payment.account_id !== accountId) return Response.json({ received: true, ignored: true });
+    const lines = payment.line_items ?? [];
+    if (payment.product_id !== productId && !lines.some((item) => item.product_id === productId)) return Response.json({ received: true, ignored: true });
+    const ids = lines.length ? lines.map((item) => item.plan_id) : [payment.plan_id];
+    if (!ids.length || ids.length > 2 || ids.some((id) => !id)) throw new Error("Payment items unavailable.");
+    const plans = await Promise.all(ids.map((id) => whop.plans.retrieve({ id: id! })));
+    const order = paidLeadOrder(payment, plans, accountId, productId);
+    await recordPaidOrder(order);
+    if (!process.env.SLACK_LEAD_ORDERS_WEBHOOK_URL) return Response.json({ received: true, recorded: true, delivery: "not_configured" });
+    // Await delivery before acknowledging so Whop can retry failures.
+    const delivery = await deliverSlackOrder(paymentId, slackOrderMessage(order));
+    return Response.json({ received: true, delivery });
   } catch {
-    return Response.json({ error: "Invalid webhook signature." }, { status: 400 });
+    console.error("Paid lead notification could not be completed", { paymentId });
+    return Response.json({ error: "Notification delivery is temporarily unavailable." }, { status: 503 });
   }
-
-  if (event.type === "payment.succeeded") {
-    waitUntil(recordPayment(event.data as unknown as Record<string, unknown>));
-  }
-  return Response.json({ received: true });
 }

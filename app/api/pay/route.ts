@@ -1,6 +1,6 @@
 import { WhopClient } from "@whop/sdk";
 import { calculateLeadQuote, leadMetadata, requestedLeadCount } from "@/lib/lead-pricing";
-import { isTopUpPlanForAmount } from "@/lib/whop-plans";
+import { isLeadItemPlan, getLeadCheckout } from "@/lib/lead-checkout";
 
 import { effectiveForceUsd, requestedPaymentMode, paymentMethodsFor } from "@/lib/payment-methods";
 import { readRateCard } from "@/lib/pricing-store";
@@ -71,13 +71,15 @@ export async function POST(request: Request) {
       return Response.json({ error: "Your payment details do not match the selected payment option. Please choose them again." }, { status: 400 });
     }
     const plan = await whop.plans.retrieve({ id: planId });
-    if (!isTopUpPlanForAmount(plan, accountId, productId, quote, forceUsd)) {
+    if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd)) {
       return Response.json({ error: "Your payment options do not match the lead order. Please choose them again." }, { status: 400 });
     }
+    const checkout = await getLeadCheckout(whop, accountId, productId, quote, forceUsd);
+    if (checkout.planId !== plan.id) return Response.json({ error: "Please reload your checkout." }, { status: 409 });
     const payment = await whop.payments.create({
       account_id: accountId,
       confirmation_token: confirmationToken,
-      plan_id: plan.id,
+      line_items: checkout.items.map((item) => ({ plan_id: item.plan, quantity: item.quantity })),
       return_url: returnUrl,
       metadata: { ...leadMetadata(quote, forceUsd), order_id: orderId },
     });
