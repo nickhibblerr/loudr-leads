@@ -2,6 +2,7 @@ import { WhopClient } from "@whop/sdk";
 import { calculateLeadQuote, leadMetadata, requestedLeadCount } from "@/lib/lead-pricing";
 import { isTopUpPlanForAmount } from "@/lib/whop-plans";
 
+import { effectiveForceUsd, requestedPaymentMode, paymentMethodsFor } from "@/lib/payment-methods";
 import { readRateCard } from "@/lib/pricing-store";
 
 export const runtime = "nodejs";
@@ -19,10 +20,15 @@ export async function POST(request: Request) {
   }
 
   const input = body as Record<string, unknown>;
-  const { state, confirmationToken, orderId, planId, currency = "usd", forceUsd = false } = input;
-  if (currency !== "usd" || typeof forceUsd !== "boolean") {
+  const { state, confirmationToken, orderId, planId, currency = "usd" } = input;
+  const requestedForceUsd = input.forceUsd === undefined ? false : input.forceUsd;
+  if (currency !== "usd" || typeof requestedForceUsd !== "boolean") {
     return Response.json({ error: "Leads are priced in USD. Whop handles local-currency conversion at checkout." }, { status: 400 });
   }
+  let paymentMode;
+  try { paymentMode = requestedPaymentMode(input.paymentMode); }
+  catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Invalid payment option." }, { status: 400 }); }
+  const forceUsd = effectiveForceUsd(paymentMode, requestedForceUsd);
   let card;
   try { card = await readRateCard(); }
   catch { return Response.json({ error: "Pricing is temporarily unavailable. Please try again." }, { status: 503 }); }
@@ -31,7 +37,7 @@ export async function POST(request: Request) {
   }
   let quote;
   try {
-    quote = calculateLeadQuote(state, requestedLeadCount(input), card.states);
+    quote = calculateLeadQuote(state, requestedLeadCount(input), card.states, paymentMode);
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Invalid lead order." }, { status: 400 });
   }
@@ -60,6 +66,9 @@ export async function POST(request: Request) {
     const confirmation = await whop.confirmationTokens.retrieve({ id: confirmationToken, account_id: accountId });
     if (confirmation.status !== "pending") {
       return Response.json({ error: "Your payment details expired or were already used. Please try again." }, { status: 400 });
+    }
+    if (!paymentMethodsFor(paymentMode).some((method) => method === confirmation.payment_method_preview?.type)) {
+      return Response.json({ error: "Your payment details do not match the selected payment option. Please choose them again." }, { status: 400 });
     }
     const plan = await whop.plans.retrieve({ id: planId });
     if (!isTopUpPlanForAmount(plan, accountId, productId, quote, forceUsd)) {

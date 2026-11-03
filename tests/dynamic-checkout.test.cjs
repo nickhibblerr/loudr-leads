@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { loadTypeScript } = require('./load-ts.cjs');
 
 const pricing = loadTypeScript('lib/top-up.ts');
-const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing });
 const preferences = loadTypeScript('lib/payment-methods.ts');
+const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
 const planHelpers = loadTypeScript('lib/whop-plans.ts', {
   '@/lib/top-up': pricing,
   '@/lib/lead-pricing': leads,
@@ -18,9 +18,9 @@ const request = (body) => new Request('https://example.com/api/test', {
   method: 'POST', body: JSON.stringify(body),
 });
 const paymentRequest = (checkout, extra = {}) => request({
-  state: checkout.quote.state, quantity: checkout.quote.leadCount,
+  state: checkout.quote.state, quantity: checkout.quote.leadCount, paymentMode: checkout.quote.paymentMode, forceUsd: checkout.forceUsd,
   priceVersion: checkout.priceVersion, planId: checkout.planId,
-  confirmationToken: 'ctok_test', orderId: 'leads_test', ...extra,
+  confirmationToken: checkout.quote.paymentMode === 'card' ? 'ctok_card' : 'ctok_test', orderId: 'leads_test', ...extra,
 });
 
 function harness() {
@@ -41,11 +41,11 @@ function harness() {
       update: async () => { throw new Error('New prices must not overwrite existing plans.'); },
       retrieve: async ({ id }) => { calls.retrieves++; return savedPlans.find((plan) => plan.id === id); },
     },
-    confirmationTokens: { retrieve: async () => { calls.confirmations++; return { status: 'pending' }; } },
+    confirmationTokens: { retrieve: async ({ id }) => { calls.confirmations++; return { status: 'pending', payment_method_preview: { type: id === 'ctok_card' ? 'card' : 'bank_wire' } }; } },
     payments: { create: async (input) => { calls.payments.push(input); return { id: 'pay_test', status: 'pending' }; } },
   };
   const dependencies = {
-    '@/lib/lead-pricing': leads,
+    '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences,
     '@/lib/whop-plans': planHelpers,
     '@/lib/pricing-store': {
       readRateCard: async () => {
@@ -210,4 +210,52 @@ test('invalid saved monetary values cannot reach plan creation or payment', asyn
     assert.equal((await h.pay(request({ state: 'TX', quantity: 2, confirmationToken: 'ctok_test', orderId: 'leads_test', planId: 'plan_test' }))).status, 400);
     assert.equal(h.calls.clients, 0);
   }
+});
+
+test('card and bank cached plans remain distinct and preserve current saved rates', async () => {
+  const h = harness();
+  h.setPrice('TX', 19.99);
+  const bank = await checkout(h, 'TX', 3, { paymentMode: 'bank' });
+  const card = await checkout(h, 'TX', 3, { paymentMode: 'card', feePercent: 0, total: 1 });
+  assert.equal(bank.quote.totalCents, 5997);
+  assert.equal(card.quote.amountCents, 5997);
+  assert.equal(card.quote.feeCents, 162);
+  assert.equal(card.quote.totalCents, 6159);
+  assert.notEqual(bank.planId, card.planId);
+  assert.equal((await checkout(h, 'TX', 3, { paymentMode: 'card' })).planId, card.planId);
+  assert.equal((await checkout(h, 'TX', 3, { paymentMode: 'bank' })).planId, bank.planId);
+  assert.equal(h.calls.creates.length, 2);
+  assert.equal((await h.pay(paymentRequest(card, { paymentMode: 'bank' }))).status, 400);
+  assert.equal((await h.pay(paymentRequest(bank, { paymentMode: 'card' }))).status, 400);
+  assert.equal(h.calls.payments.length, 0);
+  assert.equal((await h.pay(paymentRequest(card))).status, 200);
+  assert.equal(h.calls.payments[0].metadata.total_amount, '61.59');
+  h.setPrice('TX', 25.5);
+  const changed = await checkout(h, 'TX', 3, { paymentMode: 'card' });
+  assert.equal(changed.quote.amountCents, 7650);
+  assert.equal(changed.quote.feeCents, 207);
+  assert.equal(changed.quote.totalCents, 7857);
+  assert.notEqual(changed.planId, card.planId);
+  assert.equal((await h.pay(paymentRequest(card, { priceVersion: h.card.version }))).status, 400);
+});
+
+test('zero rounded surcharge still separates plans and both modes retain identity under Make USD', async () => {
+  const h = harness();
+  h.setPrice('TX', 0.01);
+  const orders = [];
+  for (const paymentMode of ['bank', 'card']) {
+    for (const forceUsd of [false, true]) {
+      const order = await checkout(h, 'TX', 1, { paymentMode, forceUsd });
+      orders.push(order);
+      assert.equal(order.quote.totalCents, 1);
+      assert.equal(order.quote.paymentMode, paymentMode);
+      assert.equal(order.forceUsd, paymentMode === 'bank' || forceUsd);
+      assert.equal((await h.pay(paymentRequest(order))).status, 200);
+    }
+  }
+  assert.equal(new Set(orders.map((order) => order.planId)).size, 3);
+  assert.equal(new Set(h.calls.creates.map(({ options }) => options.idempotencyKey)).size, 3);
+  assert.equal(h.calls.payments.length, 4);
+  assert.equal((await h.pay(paymentRequest(orders[0], { paymentMode: 'card', confirmationToken: 'ctok_card' }))).status, 400);
+  assert.equal(h.calls.payments.length, 4);
 });

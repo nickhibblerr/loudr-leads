@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTypeScript } = require('./load-ts.cjs');
-const pricing = loadTypeScript('lib/lead-pricing.ts');
+const pricing = loadTypeScript('lib/lead-pricing.ts', { '@/lib/payment-methods': loadTypeScript('lib/payment-methods.ts') });
 const card = loadTypeScript('lib/rate-card.ts', { '@/lib/lead-pricing': pricing });
 class BlobPreconditionFailedError extends Error {}
 

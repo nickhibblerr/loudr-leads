@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import { calculateLeadQuote, requestedLeadCount, type LeadQuote } from "@/lib/lead-pricing";
 import { getTopUpPlan } from "@/lib/whop-plans";
 
+import { effectiveForceUsd, requestedPaymentMode } from "@/lib/payment-methods";
 import { readRateCard } from "@/lib/pricing-store";
 
 export const runtime = "nodejs";
@@ -13,7 +14,7 @@ const resolvePlanId = unstable_cache(async (accountId: string, productId: string
   const whop = new WhopClient({ token: process.env.WHOP_API_KEY! });
   const plan = await getTopUpPlan(whop, accountId, productId, quote, forceUsd);
   return plan.id;
-}, ["loudr-lead-checkout-dynamic-v1"], { revalidate: 300 });
+}, ["loudr-lead-checkout-payment-modes-v1"], { revalidate: 300 });
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -25,10 +26,14 @@ export async function POST(request: Request) {
   const input = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
   const { state } = input;
   const currency = input.currency ?? "usd";
-  const forceUsd = input.forceUsd ?? false;
-  if (currency !== "usd" || typeof forceUsd !== "boolean") {
+  const requestedForceUsd = input.forceUsd === undefined ? false : input.forceUsd;
+  if (currency !== "usd" || typeof requestedForceUsd !== "boolean") {
     return Response.json({ error: "Leads are priced in USD. Whop handles local-currency conversion at checkout." }, { status: 400 });
   }
+  let paymentMode;
+  try { paymentMode = requestedPaymentMode(input.paymentMode); }
+  catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Invalid payment option." }, { status: 400 }); }
+  const forceUsd = effectiveForceUsd(paymentMode, requestedForceUsd);
   let card;
   try { card = await readRateCard(); }
   catch { return Response.json({ error: "Pricing is temporarily unavailable. Please try again." }, { status: 503 }); }
@@ -37,7 +42,7 @@ export async function POST(request: Request) {
   }
   let quote;
   try {
-    quote = calculateLeadQuote(state, requestedLeadCount(input), card.states);
+    quote = calculateLeadQuote(state, requestedLeadCount(input), card.states, paymentMode);
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Invalid lead order." }, { status: 400 });
   }
@@ -50,7 +55,7 @@ export async function POST(request: Request) {
   }
   try {
     const planId = await resolvePlanId(accountId, productId, quote, forceUsd);
-    return Response.json({ planId, quote, forceUsd, priceVersion: card.version }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ planId, quote, forceUsd, paymentMode, priceVersion: card.version }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const err = error as { error?: { message?: string }; message?: string };
     return Response.json({ error: err?.error?.message ?? err?.message ?? "Unable to load payment options." }, { status: 502 });

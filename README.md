@@ -16,9 +16,9 @@ Open `http://localhost:3000`. Without payment environment variables, state selec
 
 ## Lead pricing and guidance
 
-`lib/lead-pricing.ts` contains the supplied rate card for all 50 states. California is sold out and rejected by both payment endpoints. Presets are 1, 5, 10, 15 and 25 leads; custom whole-number quantities from 1 through 1,000 are supported. Guidance starts after a quantity is entered and progresses to green at 50 leads. It describes opportunity, not a promised conversion rate.
+`lib/lead-pricing.ts` contains the initial rate card for all 50 states; saved admin prices and availability override it. California starts sold out. Presets are 1, 5, 10, 15 and 25 leads; custom whole-number quantities from 1 through 1,000 are supported. Guidance starts after a quantity is entered and progresses to green at 50 leads. It describes opportunity, not a promised conversion rate.
 
-The price is the selected state's per-lead price multiplied by quantity, with **no service fee**, preserving the existing production checkout. For example, 10 Florida leads at $375 each cost $3,750. Prices are calculated using integer cents.
+The lead subtotal is the selected state's per-lead price multiplied by quantity. **Wire & ACH adds no fee. Card adds 2.7% of the subtotal**, rounded once to the nearest cent. For example, 5 Texas leads at $500 each cost $2,500 by bank or $2,567.50 by card, including a $67.50 card fee. The fee and both totals appear before selecting a checkout, and the selected fee is repeated in the payment summary. All calculations use integer cents and are repeated on the server.
 
 ## Payment configuration
 
@@ -35,11 +35,11 @@ Configure these variables in `.env.local` for local development and in the inten
 
 Public variables are embedded at build time; rebuild after changing them. Existing Vercel production settings are retained. The unused ad-spend helper remains for compatibility tests but is not used to price lead orders.
 
-`/api/checkout` and the lower-level `/api/pay` accept `state`, `quantity` (or `leadCount`) and optional boolean `forceUsd`. If both quantity aliases are present, they must match. Amounts, unit prices, fee percentages and totals supplied by clients cannot alter the server price. Unknown or sold-out states, missing/fractional quantities, quantities above 1,000 and non-USD nominal prices are rejected before calling Whop.
+`/api/checkout` and the lower-level `/api/pay` accept `state`, `quantity` (or `leadCount`), `paymentMode` (`bank` or `card`, defaulting to `bank` when omitted), and optional boolean `forceUsd`. If both quantity aliases are present, they must match. Amounts, unit prices, fee percentages and totals supplied by clients cannot alter the server price. Invalid payment modes, unknown or sold-out states, missing/fractional quantities, quantities above 1,000 and non-USD nominal prices are rejected before calling Whop.
 
-Server-created plan metadata uses production-compatible `state`, `state_name`, `quantity`, `price_per_lead` and `pricing_mode` keys, plus `source: loudr-leads-site`, `currency` and `total_amount`. Plan lookup verifies merchant, product, order and pricing mode. Cache keys and idempotency distinguish state, quantity and unit price, including orders that share a total. A legacy ad-spend plan cannot be reused or repaired as a lead plan.
+Server-created plan metadata preserves `state`, `state_name`, `quantity`, `price_per_lead`, `pricing_mode`, `source: loudr-leads-site`, `currency` and `total_amount`, and records payment mode, subtotal and fee. Plan lookup verifies merchant, product, order, pricing mode and payment-method restrictions. Cache keys and idempotency distinguish bank from card, state, quantity and unit price, including orders that share a total. A plan for a different payment mode cannot be reused or repaired as the selected mode.
 
-Whop handles eligible local currencies. Make USD selects a separate non-adaptive plan without changing another buyer's adaptive plan. EUR bank transfer, SEPA, USD bank wire and ACH remain enabled; other payment methods remain disabled.
+The Wire & ACH checkout enables only `bank_wire` and `us_bank_account`, and uses USD because those methods require it. The Card checkout enables only `card`; Whop can display eligible local currencies, and Make USD selects a separate non-adaptive card plan. Both configurations disable platform defaults and exclude the other checkout's methods. Whop still applies account and buyer eligibility rules.
 
 ## Deployment and fulfillment
 
@@ -47,7 +47,7 @@ Production: `https://loudr-leads.vercel.app`, project `prj_laSEpueJ84xcCcFItcwPS
 
 The signed `payment.succeeded` webhook logs payment metadata only. It does **not** deliver leads or credit balances. Fulfillment must retrieve and verify the payment and server-authored plan, map the buyer, and deduplicate durable work on `payment.id`. Checkout-provided metadata and return-page query parameters are not fulfillment authority.
 
-Unit tests validate pricing, unavailable states, quantity boundaries, no-fee totals, cache separation and plan verification. A production build is required before deployment. Payment verification must not create a real buyer charge merely to test a release.
+Unit tests validate pricing, unavailable states, quantity boundaries, card-fee rounding, bank/card restrictions, cache separation and plan verification. A production build is required before deployment. Payment verification must not create a real buyer charge merely to test a release.
 
 ## Branding
 

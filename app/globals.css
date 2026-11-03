@@ -116,6 +116,18 @@ h1 { margin: 0; font-size: clamp(44px, 4.7vw, 66px); font-weight: 500; line-heig
 .primary-button:active:not(:disabled) { background: #e3b300; }
 .primary-button:disabled { background: #303030; color: #a0a0a0; border-color: #444444; }
 .primary-button svg { width: 17px; }
+.payment-options { display: grid; gap: 20px; }
+.payment-option-total, .payment-option-fee { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 1.5; }
+.payment-option-total strong { font-size: 20px; font-weight: 500; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.payment-option-note { margin: 4px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.payment-option-card { border-top: 1px solid var(--border); padding-top: 18px; }
+.payment-option-fee { color: var(--secondary); margin-bottom: 7px; }
+.payment-option-card .payment-option-total { margin-bottom: 12px; }
+.payment-option-button { gap: 9px; padding-left: 12px; padding-right: 12px; line-height: 1.5; }
+.payment-option-button > span { min-width: 0; }
+.card-payment-button { color: var(--accent); border-color: #766219; background: #221d0d; }
+.card-payment-button:hover:not(:disabled) { background: #332a0e; }
+.card-payment-button:active:not(:disabled) { background: #40340e; }
 .panel-footnote { margin: 15px 0 0; text-align: center; color: #aaaaaa; font-size: 10px; line-height: 1.6; }
 .site-footer { border-top: 1px solid #292929; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 22px; color: #999999; font-size: 10px; }
 .payment-summary { margin: 27px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 19px 0; }
@@ -188,6 +200,7 @@ h1 { margin: 0; font-size: clamp(44px, 4.7vw, 66px); font-weight: 500; line-heig
   .panel-topline { margin-bottom: 27px; }
   .panel-title { font-size: 23px; }
   .panel-description { font-size: 12px; }
+  .payment-option-button { font-size: 12px; }
   .amount-field { gap: 6px; }
   .amount-field input { font-size: clamp(44px, 14.2vw, 64px); letter-spacing: -2.8px; }
   .currency-symbol { font-size: 40px; }

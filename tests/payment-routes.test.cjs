@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTypeScript } = require('./load-ts.cjs');
 const pricing = loadTypeScript('lib/top-up.ts');
-const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing });
 const preferences = loadTypeScript('lib/payment-methods.ts');
+const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
 const plans = loadTypeScript('lib/whop-plans.ts', { '@/lib/payment-methods': preferences, '@/lib/top-up': pricing, '@/lib/lead-pricing': leads });
 const env = { WHOP_API_KEY: 'test-key', WHOP_ACCOUNT_ID: 'biz_test', WHOP_LEADS_PRODUCT_ID: 'prod_test', NEXT_PUBLIC_SITE_URL: 'https://example.com' };
 const pricingStore = { readRateCard: async () => ({ version: 'initial', updatedAt: null, states: leads.LEAD_STATES }) };
@@ -11,21 +11,21 @@ const request = (body) => new Request('https://example.com/api/test', { method: 
 function checkoutRoute() {
   const calls = [];
   const { POST } = loadTypeScript('app/api/checkout/route.ts', {
-    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/pricing-store': pricingStore,
+    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences, '@/lib/pricing-store': pricingStore,
     '@/lib/whop-plans': { getTopUpPlan: async (_, account, product, quote, forceUsd) => { calls.push({ account, product, quote, forceUsd }); return { id: 'plan_test' }; } },
     '@whop/sdk': { WhopClient: class {} }, 'next/cache': { unstable_cache: (fn) => fn },
   }, { process: { env } });
   return { POST, calls };
 }
-function payRoute(planChange = {}) {
-  const quote = leads.calculateLeadQuote('TX', 2);
-  const plan = { id: 'plan_test', account: { id: 'biz_test' }, product: { id: 'prod_test' }, currency: 'usd', initial_price: 1000,
-    plan_type: 'one_time', visibility: 'quick_link', adaptive_pricing_enabled: true, metadata: leads.leadMetadata(quote), payment_method_configuration: preferences.topUpPaymentConfiguration, ...planChange };
+function payRoute(planChange = {}, paymentMode = 'bank', confirmationType = paymentMode === 'card' ? 'card' : 'bank_wire') {
+  const quote = leads.calculateLeadQuote('TX', 2, undefined, paymentMode);
+  const plan = { id: 'plan_test', account: { id: 'biz_test' }, product: { id: 'prod_test' }, currency: 'usd', initial_price: quote.total,
+    plan_type: 'one_time', visibility: 'quick_link', adaptive_pricing_enabled: paymentMode !== 'bank', metadata: leads.leadMetadata(quote), payment_method_configuration: preferences.paymentConfigurationFor(paymentMode), ...planChange };
   const charges = [];
-  const client = { confirmationTokens: { retrieve: async () => ({ status: 'pending' }) }, plans: { retrieve: async () => plan },
+  const client = { confirmationTokens: { retrieve: async () => ({ status: 'pending', payment_method_preview: { type: confirmationType } }) }, plans: { retrieve: async () => plan },
     payments: { create: async (input) => { charges.push(input); return { id: 'pay_test', status: 'pending' }; } } };
   const { POST } = loadTypeScript('app/api/pay/route.ts', {
-    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/whop-plans': plans, '@/lib/pricing-store': pricingStore,
+    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences, '@/lib/whop-plans': plans, '@/lib/pricing-store': pricingStore,
     '@whop/sdk': { WhopClient: class { constructor() { return client; } } },
   }, { process: { env } });
   return { POST, charges };
@@ -38,7 +38,7 @@ test('checkout calculates total on the server and ignores a supplied fake total'
   const body = await response.json();
   assert.equal(body.quote.total, 1000);
   assert.equal(calls[0].quote.currency, 'usd');
-  assert.equal(calls[0].forceUsd, false);
+  assert.equal(calls[0].forceUsd, true);
   assert.equal(calls[0].account, 'biz_test');
 });
 test('both endpoints reject nominal currency and malformed USD override before calling Whop', async () => {
@@ -116,5 +116,68 @@ test('live quantity field is accepted, aliases agree and conflicting quantities 
   assert.equal((await payment.POST(request({ ...validPayment, leadCount: undefined, quantity: 2 }))).status, 200);
   for (const route of [checkoutRoute(), payRoute()]) {
     assert.equal((await route.POST(request({ ...validPayment, quantity: 3 }))).status, 400);
+  }
+});
+
+test('both endpoints reject malformed payment modes without a plan or charge', async () => {
+  for (const paymentMode of [null, '', 'CARD', 'wire', 'ach', 'crypto', 0, false, {}, ['card']]) {
+    const checkout = checkoutRoute();
+    const pay = payRoute();
+    assert.equal((await checkout.POST(request({ ...validPayment, paymentMode }))).status, 400);
+    assert.equal((await pay.POST(request({ ...validPayment, paymentMode }))).status, 400);
+    assert.equal(checkout.calls.length, 0);
+    assert.equal(pay.charges.length, 0);
+  }
+});
+
+test('card checkout and charge use the server surcharge despite client fee or total tampering', async () => {
+  for (const forceUsd of [false, true]) {
+    const checkout = checkoutRoute();
+    const response = await checkout.POST(request({ state: 'TX', quantity: 2, paymentMode: 'card', forceUsd, fee: 0, feePercent: 0, feeCents: 0, total: 1 }));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.quote.paymentMode, 'card');
+    assert.equal(body.quote.amountCents, 100000);
+    assert.equal(body.quote.feeCents, 2700);
+    assert.equal(body.quote.totalCents, 102700);
+    assert.equal(checkout.calls[0].forceUsd, forceUsd);
+    const quote = leads.calculateLeadQuote('TX', 2, undefined, 'card');
+    const pay = payRoute({ adaptive_pricing_enabled: !forceUsd, metadata: leads.leadMetadata(quote, forceUsd) }, 'card');
+    const paid = await pay.POST(request({ ...validPayment, paymentMode: 'card', forceUsd, fee: 0, feePercent: 0, total: 1 }));
+    assert.equal(paid.status, 200);
+    assert.equal(pay.charges.length, 1);
+    assert.equal(pay.charges[0].metadata.payment_mode, 'card');
+    assert.equal(pay.charges[0].metadata.subtotal_amount, '1000');
+    assert.equal(pay.charges[0].metadata.payment_fee_amount, '27');
+    assert.equal(pay.charges[0].metadata.total_amount, '1027');
+  }
+});
+
+test('confirmation token method must belong to the selected payment path', async () => {
+  for (const [paymentMode, type] of [['bank', 'card'], ['bank', 'sepa_debit'], ['card', 'bank_wire'], ['card', 'us_bank_account'], ['card', null]]) {
+    const pay = payRoute({}, paymentMode, type);
+    assert.equal((await pay.POST(request({ ...validPayment, paymentMode }))).status, 400);
+    assert.equal(pay.charges.length, 0);
+  }
+  for (const type of ['bank_wire', 'us_bank_account']) {
+    const pay = payRoute({}, 'bank', type);
+    assert.equal((await pay.POST(request({ ...validPayment, paymentMode: 'bank' }))).status, 200);
+  }
+});
+
+test('Wire and ACH always prepare USD plans even when adaptive pricing is requested', async () => {
+  for (const forceUsd of [undefined, false, true]) {
+    const checkout = checkoutRoute();
+    const response = await checkout.POST(request({ state: 'TX', quantity: 2, paymentMode: 'bank', forceUsd }));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.forceUsd, true);
+    assert.equal(body.quote.paymentMode, 'bank');
+    assert.equal(body.quote.feeCents, 0);
+    assert.equal(body.quote.total, 1000);
+    assert.equal(checkout.calls[0].forceUsd, true);
+    const pay = payRoute();
+    assert.equal((await pay.POST(request({ ...validPayment, paymentMode: 'bank', forceUsd }))).status, 200);
+    assert.equal(pay.charges[0].metadata.pricing_mode, 'forced_usd');
   }
 });

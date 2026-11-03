@@ -9,6 +9,7 @@ import { calculateLeadQuote, MAX_LEAD_QUANTITY, leadMetadata, type LeadQuote } f
 import { isValidLeadCount } from "@/lib/leads";
 import LeadSelector from "@/components/LeadSelector";
 import type { RateCard } from "@/lib/rate-card";
+import type { PaymentMode } from "@/lib/payment-methods";
 
 const appearance = {
   theme: { appearance: "dark" as const, accentColor: "yellow" as const, grayColor: "gray" as const },
@@ -34,6 +35,7 @@ export default function TopUp() {
   const [stateTouched, setStateTouched] = useState(false);
   const stateRef = useRef<HTMLSelectElement>(null);
   const currency = "usd" as const;
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>("bank");
   const [forceUsd, setForceUsd] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(true);
   const [completed, setCompleted] = useState(false);
@@ -52,7 +54,7 @@ export default function TopUp() {
     const result = await fetch("/api/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state: quote.state, quantity: quote.leadCount, forceUsd, priceVersion: rateCard?.version }),
+      body: JSON.stringify({ state: quote.state, quantity: quote.leadCount, paymentMode: quote.paymentMode, forceUsd, priceVersion: rateCard?.version }),
       signal: AbortSignal.timeout(15_000),
     });
     const response = await result.json();
@@ -65,7 +67,9 @@ export default function TopUp() {
     if (!result.ok || typeof response.planId !== "string" || !/^plan_[a-zA-Z0-9]+$/.test(response.planId) ||
       response.quote?.state !== quote.state || response.quote?.leadCount !== quote.leadCount || response.quote?.unitPrice !== quote.unitPrice ||
       response.quote?.totalCents !== quote.totalCents || response.quote?.amountCents !== quote.amountCents ||
-      response.quote?.feeBasisPoints !== quote.feeBasisPoints || response.quote?.currency !== "usd" || response.forceUsd !== forceUsd) {
+      response.quote?.paymentMode !== quote.paymentMode || response.quote?.feeCents !== quote.feeCents ||
+      response.quote?.feeBasisPoints !== quote.feeBasisPoints || response.quote?.feePercent !== quote.feePercent ||
+      response.quote?.currency !== "usd" || response.forceUsd !== forceUsd) {
       throw new Error(response.error || "We couldn’t load payment options. Please try again.");
     }
     return response.planId as string;
@@ -76,10 +80,15 @@ export default function TopUp() {
   const selectedState = rateCard?.states.find((item) => item.code === state);
   const maxLeads = MAX_LEAD_QUANTITY;
   const stateError = stateTouched && !selectedState ? "Choose a state to see your price." : selectedState?.price === null ? `${selectedState.name} is sold out. Please choose another state.` : null;
-  const quote = useMemo(() => {
-    try { return rateCard ? calculateLeadQuote(state, leadCount, rateCard.states) : null; }
+  const bankQuote = useMemo(() => {
+    try { return rateCard ? calculateLeadQuote(state, leadCount, rateCard.states, "bank") : null; }
     catch { return null; }
   }, [state, leadCount, rateCard]);
+  const cardQuote = useMemo(() => {
+    try { return rateCard ? calculateLeadQuote(state, leadCount, rateCard.states, "card") : null; }
+    catch { return null; }
+  }, [state, leadCount, rateCard]);
+  const quote = paymentMode === "card" ? cardQuote : bankQuote;
   const checkoutMetadata = useMemo(() => quote ? { ...leadMetadata(quote, forceUsd), order_id: orderId } : undefined, [quote, forceUsd, orderId]);
   const error = (touched ? amountError(value, maxLeads) : null);
   const accountId = process.env.NEXT_PUBLIC_WHOP_ACCOUNT_ID;
@@ -120,6 +129,9 @@ export default function TopUp() {
 
   async function continueToPayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const nextMode: PaymentMode = submitter instanceof HTMLButtonElement && submitter.value === "card" ? "card" : "bank";
+    const nextQuote = nextMode === "card" ? cardQuote : bankQuote;
     setTouched(true);
     setStateTouched(true);
     if (!selectedState || selectedState.price === null) { stateRef.current?.focus(); return; }
@@ -127,9 +139,10 @@ export default function TopUp() {
       inputRef.current?.focus();
       return;
     }
-    if (!quote || !rateCard || pricingError) { inputRef.current?.focus(); return; }
+    if (!nextQuote || !rateCard || pricingError) { inputRef.current?.focus(); return; }
     if (preparingRef.current) return;
     preparingRef.current = true;
+    setPaymentMode(nextMode);
     setPreparing(true);
     setCheckoutError(null);
     try {
@@ -143,12 +156,12 @@ export default function TopUp() {
         }
       }
       if (configured) {
-        setPlanId(await preparePlan(quote));
-        setForceUsd(false);
+        setPlanId(await preparePlan(nextQuote, nextMode === "bank"));
         setElementError(null);
         setCheckoutLoading(true);
         setCompleted(false);
       }
+      setForceUsd(nextMode === "bank");
       setOrderId(`leads_${Date.now().toString(36)}`);
       setStep("payment");
     } catch (error) {
@@ -162,6 +175,9 @@ export default function TopUp() {
   function changeAmount() {
     if (preparing || completed) return;
     setPlanId(null);
+    setPaymentMode("bank");
+    setForceUsd(false);
+    setCheckoutError(null);
     setStep("amount");
     requestAnimationFrame(() => inputRef.current?.focus());
   }
@@ -216,21 +232,36 @@ export default function TopUp() {
 
             <div className="quote-summary" aria-live="polite">
               <div><span>Price per lead{selectedState ? ` (${selectedState.code})` : ""}</span><span>{selectedState?.price ? formatAmount(selectedState.price) : "—"}</span></div>
-              <div><span>Lead subtotal{quote ? ` (${quote.leadCount} ${quote.leadCount === 1 ? "lead" : "leads"})` : ""}</span><span>{quote ? formatAmount(quote.amount, currency) : "—"}</span></div>
-              <div className="quote-total"><span>Total to pay</span><strong>{quote ? formatAmount(quote.total, currency) : "—"}</strong></div>
+              <div><span>Lead subtotal{bankQuote ? ` (${bankQuote.leadCount} ${bankQuote.leadCount === 1 ? "lead" : "leads"})` : ""}</span><span>{bankQuote ? formatAmount(bankQuote.amount, currency) : "—"}</span></div>
             </div>
             {checkoutError && <p className="form-error checkout-error" role="alert">{checkoutError}</p>}
-            <button className="primary-button" type="submit" disabled={preparing || !quote || Boolean(pricingError)}>{preparing ? "Loading payment options…" : "Continue to payment"} {!preparing && <ArrowIcon />}</button>
-            <p className="panel-footnote">Choose your payment method in the next step.</p>
+            <div className="payment-options" role="group" aria-label="Choose your payment method">
+              <div className="payment-option">
+                <div className="payment-option-total" id="bank-total" aria-live="polite"><span>Wire &amp; ACH total</span><strong>{bankQuote ? formatAmount(bankQuote.total, currency) : "—"}</strong></div>
+                <p className="payment-option-note">No additional fee</p>
+                <button className="primary-button payment-option-button" type="submit" name="paymentMode" value="bank" aria-describedby="bank-total" disabled={preparing || !bankQuote || Boolean(pricingError)}>
+                  <span>{preparing && paymentMode === "bank" ? "Loading Wire & ACH…" : "Continue to Payment (Wire & ACH)"}</span><ArrowIcon />
+                </button>
+              </div>
+              <div className="payment-option payment-option-card">
+                <div className="payment-option-fee" id="card-fee" aria-live="polite"><span>Card fee (2.7%)</span><span>{cardQuote ? `+${formatAmount(cardQuote.fee, currency)}` : "—"}</span></div>
+                <div className="payment-option-total" id="card-total" aria-live="polite"><span>Card total</span><strong>{cardQuote ? formatAmount(cardQuote.total, currency) : "—"}</strong></div>
+                <button className="primary-button payment-option-button card-payment-button" type="submit" name="paymentMode" value="card" aria-describedby="card-fee card-total" disabled={preparing || !cardQuote || Boolean(pricingError)}>
+                  <span>{preparing && paymentMode === "card" ? "Loading Card…" : "Continue to Payment (Card)"}</span><ArrowIcon />
+                </button>
+              </div>
+            </div>
+            <p className="panel-footnote">Totals shown in USD. Card payments include the 2.7% fee shown above.</p>
           </form>
         ) : (
           <>
             <h2 className="panel-title" ref={paymentTitleRef} tabIndex={-1}>One step from momentum.</h2>
-            <p className="panel-description">Complete your lead order securely with Whop.</p>
+            <p className="panel-description">{paymentMode === "card" ? "Pay by card securely with Whop." : "Pay by wire or ACH securely with Whop."}</p>
             <div className="payment-summary">
               <div><span>{selectedState?.name} · {leadCount} {leadCount === 1 ? "lead" : "leads"}</span><span>{quote ? formatAmount(quote.amount, currency) : "—"}</span></div>
+              {paymentMode === "card" && <div className="fee-summary-row"><span>Card fee (2.7%)</span><span>{quote ? formatAmount(quote.fee, currency) : "—"}</span></div>}
               <div className="quote-total"><span>USD total</span><strong>{quote ? formatAmount(quote.total, currency) : "—"}</strong></div>
-              <button className="text-button" type="button" onClick={changeAmount} disabled={preparing || completed}>Change state or leads</button>
+              <button className="text-button" type="button" onClick={changeAmount} disabled={preparing || completed}>Change state, leads or payment method</button>
             </div>
             {configured && planId && quote ? (
               <>
@@ -240,7 +271,7 @@ export default function TopUp() {
                     <button className="text-button" type="button" onClick={() => { loadError.retry(); setLoadError(null); }}>Reload payment form</button>
                   </div>
                 )}
-                <p className="currency-note">{forceUsd ? "Payment currency is USD." : "Your local-currency total and eligible bank methods appear below."}</p>
+                <p className="currency-note">{paymentMode === "bank" ? "Wire and ACH payments are charged in USD." : forceUsd ? "Payment currency is USD." : "Your card checkout and local-currency total appear below."}</p>
                 {elementError && <div className="payment-load-error" role="alert">
                   <p className="form-error">{elementError}</p>
                   <button className="text-button" type="button" onClick={() => { setElementError(null); setCheckoutLoading(true); setCheckoutVersion((version) => version + 1); }}>Reload checkout</button>
@@ -255,12 +286,12 @@ export default function TopUp() {
                     onError={(event) => { setElementError(event.message || "Unable to load checkout. Please try again."); setCheckoutLoading(false); }} />
                 </Checkout>
                 {checkoutError && <p className="form-error" role="alert">{checkoutError}</p>}
-                <div className="usd-override">
+                {paymentMode === "card" && <div className="usd-override">
                   {forceUsd ? <p role="status">Paying in US dollars.</p> : <>
                     <p>Prefer to pay in US dollars?</p>
                     <button className="text-button" type="button" onClick={makeUsd} disabled={preparing || checkoutLoading || completed}>{preparing ? "Switching to USD…" : "Make USD"}</button>
                   </>}
-                </div>
+                </div>}
               </>
             ) : (
               <div className="configuration-notice" role="status">

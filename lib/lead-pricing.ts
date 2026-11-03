@@ -1,4 +1,5 @@
 import { type TopUpQuote } from "@/lib/top-up";
+import { CARD_FEE_BASIS_POINTS, effectiveForceUsd, requestedPaymentMode, type PaymentMode } from "@/lib/payment-methods";
 
 export const MAX_LEAD_QUANTITY = 1000;
 
@@ -57,13 +58,14 @@ export const LEAD_STATES = [
 
 export type LeadState = typeof LEAD_STATES[number]["code"];
 export type LeadRate = { code: LeadState; name: string; price: number | null };
-export type LeadQuote = TopUpQuote & { state: LeadState; stateName: string; leadCount: number; unitPrice: number; quantity: number; pricePerLead: number };
+export type LeadQuote = TopUpQuote & { paymentMode: PaymentMode; state: LeadState; stateName: string; leadCount: number; unitPrice: number; quantity: number; pricePerLead: number };
 
 export function isValidLeadState(value: unknown): value is LeadState {
   return typeof value === "string" && LEAD_STATES.some((state) => state.code === value);
 }
 
-export function calculateLeadQuote(state: unknown, leadCount: unknown, rates: readonly LeadRate[] = LEAD_STATES): LeadQuote {
+export function calculateLeadQuote(state: unknown, leadCount: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank"): LeadQuote {
+  const mode = requestedPaymentMode(paymentMode);
   const selection = rates.find((item) => item.code === state);
   if (!selection) throw new Error("Choose a valid state.");
   if (selection.price === null) throw new Error(`${selection.name} leads are currently sold out. Please choose another state.`);
@@ -74,8 +76,11 @@ export function calculateLeadQuote(state: unknown, leadCount: unknown, rates: re
   if (!Number.isFinite(selection.price) || selection.price <= 0 || selection.price > 10_000 ||
     Math.abs(selection.price * 100 - Math.round(selection.price * 100)) > 0.000001) throw new Error("Invalid state price.");
   const amountCents = Math.round(selection.price * 100) * leadCount;
-  return { currency: "usd", amountCents, totalCents: amountCents, feeCents: 0, feeBasisPoints: 0,
-    amount: amountCents / 100, total: amountCents / 100, feePercent: 0, fee: 0,
+  const feeBasisPoints = mode === "card" ? CARD_FEE_BASIS_POINTS : 0;
+  const feeCents = Math.round(amountCents * feeBasisPoints / 10_000);
+  const totalCents = amountCents + feeCents;
+  return { paymentMode: mode, currency: "usd", amountCents, totalCents, feeCents, feeBasisPoints,
+    amount: amountCents / 100, total: totalCents / 100, feePercent: feeBasisPoints / 100, fee: feeCents / 100,
     state: selection.code, stateName: selection.name, leadCount, unitPrice: selection.price, quantity: leadCount, pricePerLead: selection.price };
 
 }
@@ -85,13 +90,15 @@ export function isLeadQuote(quote: TopUpQuote | LeadQuote): quote is LeadQuote {
 }
 
 export function leadQuoteKey(quote: LeadQuote): string {
-  return `${quote.state}-${quote.leadCount}-${quote.unitPrice}-${quote.currency}-${quote.totalCents}`;
+  return `${quote.paymentMode}-${quote.state}-${quote.leadCount}-${quote.unitPrice}-${quote.currency}-${quote.totalCents}`;
 }
 
 export function leadMetadata(quote: LeadQuote, forceUsd = false) {
   return { source: "loudr-leads-site", currency: quote.currency,
-    pricing_mode: forceUsd ? "forced_usd" : "adaptive", state: quote.state, state_name: quote.stateName,
-    quantity: String(quote.leadCount), price_per_lead: String(quote.unitPrice), total_amount: String(quote.total) };
+    pricing_mode: effectiveForceUsd(quote.paymentMode, forceUsd) ? "forced_usd" : "adaptive", state: quote.state, state_name: quote.stateName,
+    quantity: String(quote.leadCount), price_per_lead: String(quote.unitPrice), total_amount: String(quote.total),
+    payment_mode: quote.paymentMode, subtotal_amount: String(quote.amount),
+    payment_fee_percent: String(quote.feePercent), payment_fee_amount: String(quote.fee) };
 }
 
 export function requestedLeadCount(input: Record<string, unknown>): unknown {

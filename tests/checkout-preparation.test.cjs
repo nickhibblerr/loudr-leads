@@ -87,7 +87,7 @@ test('adaptive and forced USD preparation are cached separately', async () => {
 
 test('lead orders at the same total keep separate cached plans by state and quantity', async () => {
   const { create } = loadPreparer();
-  const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing });
+  const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': loadTypeScript('lib/payment-methods.ts') });
   let calls = 0;
   const prepare = create(async () => `plan_${++calls}`, leads.leadQuoteKey);
   const alabama = leads.calculateLeadQuote('AL', 1);
