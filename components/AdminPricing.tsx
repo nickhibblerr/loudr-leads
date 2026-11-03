@@ -6,6 +6,12 @@ type StatePrice = { code: string; name: string; price: number | null };
 type RateCard = { version: string; updatedAt: string | null; states: StatePrice[] };
 type Draft = { price: string; soldOut: boolean };
 
+class AdminAccessError extends Error {
+  constructor(public readonly status: 401 | 403) {
+    super(status === 401 ? "Your session expired. Sign in again to manage prices." : "Your account no longer has access to Loudr Media’s admin page.");
+  }
+}
+
 function draftsFor(card: RateCard): Record<string, Draft> {
   return Object.fromEntries(card.states.map((state) => [state.code, {
     price: state.price === null ? "" : String(state.price), soldOut: state.price === null,
@@ -21,6 +27,7 @@ function validPrice(price: number | null): boolean {
 }
 
 async function readCard(response: Response): Promise<RateCard> {
+  if (response.status === 401 || response.status === 403) throw new AdminAccessError(response.status);
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "We couldn’t load your prices. Please try again.");
   if (typeof body?.version !== "string" || !Array.isArray(body?.states)) throw new Error("We couldn’t read your prices. Please try again.");
@@ -36,13 +43,26 @@ export default function AdminPricing() {
   const [conflict, setConflict] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [accessFailure, setAccessFailure] = useState<401 | 403 | null>(null);
+  const [saveRejected, setSaveRejected] = useState(false);
+
+  function showFailure(cause: unknown, fallback: string, rejectedSave = false) {
+    if (cause instanceof AdminAccessError) {
+      setAccessFailure(cause.status);
+      setSaveRejected(rejectedSave);
+      setCard(null);
+      setDrafts({});
+      setMessage("");
+    }
+    setError(cause instanceof Error ? cause.message : fallback);
+  }
 
   useEffect(() => {
     const controller = new AbortController();
     void fetch("/api/admin/prices", { cache: "no-store", signal: controller.signal })
       .then(readCard)
       .then((next) => { setCard(next); setDrafts(draftsFor(next)); })
-      .catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "We couldn’t load your prices."); })
+      .catch((cause: unknown) => { if (!controller.signal.aborted) showFailure(cause, "We couldn’t load your prices."); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, []);
@@ -75,7 +95,7 @@ export default function AdminPricing() {
       setConflict(false);
       setMessage("Latest prices loaded.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "We couldn’t load your prices. Please try again.");
+      showFailure(cause, "We couldn’t load your prices. Please try again.");
     } finally { setLoading(false); }
   }
 
@@ -118,9 +138,17 @@ export default function AdminPricing() {
       setDrafts(draftsFor(next));
       setMessage(`Saved ${dirtyCount} ${dirtyCount === 1 ? "state" : "states"}. New checkouts use these prices.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Your changes weren’t saved. Please try again.");
+      showFailure(cause, "Your changes weren’t saved. Please try again.", true);
     } finally { setSaving(false); }
   }
+
+  if (accessFailure) return (
+    <section className="admin-empty">
+      <p className="form-error" role="alert">{error}</p>
+      {saveRejected && <p>Your latest changes weren’t saved.</p>}
+      {accessFailure === 401 ? <a href="/admin/login" className="admin-entry-button admin-sign-in-link">Sign in again</a> : <form action="/api/auth/logout" method="post"><button className="admin-secondary" type="submit">Sign in again</button></form>}
+    </section>
+  );
 
   if (!card) return (
     <section className="admin-empty" aria-busy={loading}>

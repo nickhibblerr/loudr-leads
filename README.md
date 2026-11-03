@@ -32,8 +32,13 @@ Configure these variables in `.env.local` for local development and in the inten
 | `NEXT_PUBLIC_WHOP_ACCOUNT_ID` | Same merchant account, used by payment elements. |
 | `WHOP_WEBHOOK_SECRET` | Server-only signing secret for the payment webhook. |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally; `https://loudr-leads.vercel.app` in production. |
+| `ADMIN_USERNAME` | Server-side username for the temporary shared admin login. |
+| `ADMIN_PASSWORD_HASH` | Salted scrypt password hash; never a plaintext password or public variable. |
+| `ADMIN_SESSION_SECRET` | Independent random server-only secret for encrypted admin sessions. |
 
 Public variables are embedded at build time; rebuild after changing them. Existing Vercel production settings are retained. The unused ad-spend helper remains for compatibility tests but is not used to price lead orders.
+
+The payment business is Loudr Media (`biz_HqBscEcuZxTgaf`), using its dedicated hidden LOUDR Leads product (`prod_4ka5HAkOPLwBO`). The server and public account IDs must match this business. Its API key and webhook signing secret are stored only in Vercel production secrets. Both the merchant and product are part of plan matching and cache identity.
 
 `/api/checkout` and the lower-level `/api/pay` accept `state`, `quantity` (or `leadCount`), `paymentMode` (`bank` or `card`, defaulting to `bank` when omitted), and optional boolean `forceUsd`. If both quantity aliases are present, they must match. Amounts, unit prices, fee percentages and totals supplied by clients cannot alter the server price. Invalid payment modes, unknown or sold-out states, missing/fractional quantities, quantities above 1,000 and non-USD nominal prices are rejected before calling Whop.
 
@@ -61,4 +66,10 @@ Each save sends changed states and the last-read ETag. Conditional writes reject
 
 `/api/prices` returns current public prices without caching. The checkout refreshes its displayed rate card on focus and periodically, and every new plan request rechecks server-side prices. An outdated `priceVersion` returns 409 and asks the buyer to review the new total. Plan-cache keys include the computed price; the guarded legacy payment route also validates against the current rate card.
 
-The owner explicitly requested open admin for this first release. `ADMIN_ACCESS_MODE=open` enables its API. `lib/admin-auth.ts` centralizes this temporary policy and same-origin write checks; replace it with verified Whop OAuth sessions and business team-membership checks before restricting access to staff. The flag is not authentication: while open, any visitor can edit prices.
+The admin now requires a server-verified username and password at `/admin/login`. Both the page and `/api/admin/prices` reject unauthenticated access; the former open-access flag is no longer honored. Authentication uses a salted scrypt hash and an encrypted, HttpOnly session cookie with an eight-hour lifetime, Secure on HTTPS and SameSite=Lax. Sessions are bound to the current business, site origin, username and credential version, so changing the password invalidates existing sessions. Saves and login/logout submissions also enforce same-origin requests.
+
+`ADMIN_PASSWORD_HASH` has the format `scrypt$<salt-base64url>$<hash-base64url>`: 16 random salt bytes and a 64-byte scrypt result using N=16384, r=8, p=1 and maxmem=64 MiB. Generate a separate random `ADMIN_SESSION_SECRET` of at least 32 characters. Never commit either value or the plaintext password.
+
+Login allows up to 10 attempts per client IP in each five-minute window. Production counters use conditional writes in the existing private Blob store, under HMAC-derived names that do not expose raw IP addresses. If that store is unavailable, sign-in fails closed; local development without storage uses a bounded in-memory counter.
+
+Whop OAuth and live team-membership authorization are deferred in favor of the requested temporary shared login. The current merchant key can read joined team members, but creating an OAuth app requires `developer:create_app`; webhook configuration inspection requires `developer:manage_webhook`. A future Whop login must verify the authenticated user against joined team members of `biz_HqBscEcuZxTgaf`, not paid customer memberships.
