@@ -32,8 +32,8 @@ Configure these variables in `.env.local` for local development and in the inten
 | `NEXT_PUBLIC_WHOP_ACCOUNT_ID` | Same merchant account, used by payment elements. |
 | `WHOP_WEBHOOK_SECRET` | Server-only signing secret for the payment webhook. |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally; `https://loudr-leads.vercel.app` in production. |
-| `ADMIN_USERNAME` | Server-side username for the temporary shared admin login. |
-| `ADMIN_PASSWORD_HASH` | Salted scrypt password hash; never a plaintext password or public variable. |
+| `WHOP_OAUTH_CLIENT_ID` | Whop OAuth app for admin sign-in: `app_RaP619R6n2xjF2` ("LOUDR Leads Admin"). |
+| `WHOP_OAUTH_CLIENT_SECRET` | Optional; only if the OAuth app is changed to a confidential client. |
 | `ADMIN_SESSION_SECRET` | Independent random server-only secret for encrypted admin sessions. |
 
 Public variables are embedded at build time; rebuild after changing them. Existing Vercel production settings are retained. The unused ad-spend helper remains for compatibility tests but is not used to price lead orders.
@@ -68,13 +68,16 @@ Each save sends changed states and the last-read ETag. Conditional writes reject
 
 `/api/prices` returns current public prices without caching. The checkout refreshes its displayed rate card on focus and periodically, and every new plan request rechecks server-side prices. An outdated `priceVersion` returns 409 and asks the buyer to review the new total. Plan-cache keys include the computed price; the guarded legacy payment route also validates against the current rate card.
 
-The admin now requires a server-verified username and password at `/admin/login`. Both the page and `/api/admin/prices` reject unauthenticated access; the former open-access flag is no longer honored. Authentication uses a salted scrypt hash and an encrypted, HttpOnly session cookie with an eight-hour lifetime, Secure on HTTPS and SameSite=Lax. Sessions are bound to the current business, site origin, username and credential version, so changing the password invalidates existing sessions. Saves and login/logout submissions also enforce same-origin requests.
+Admin access requires **Sign in with Whop**, and only joined team members of Loudr Media (`biz_HqBscEcuZxTgaf`) are allowed. Paid customers, pending invites, agents and Whop's view-only Partner role are refused. Both `/admin` and `/api/admin/prices` reject everyone else.
 
-`ADMIN_PASSWORD_HASH` has the format `scrypt$<salt-base64url>$<hash-base64url>`: 16 random salt bytes and a 64-byte scrypt result using N=16384, r=8, p=1 and maxmem=64 MiB. Generate a separate random `ADMIN_SESSION_SECRET` of at least 32 characters. Never commit either value or the plaintext password.
+Sign-in uses the hidden Whop OAuth app "LOUDR Leads Admin" (`app_RaP619R6n2xjF2`, a public OAuth 2.1 + PKCE client). Its allowed redirect URIs are `https://loudr-leads.vercel.app/api/auth/whop/callback` and `http://localhost:3000/api/auth/whop/callback`; add any other origin in the Whop developer dashboard before using it.
 
-Login allows up to 10 attempts per client IP in each five-minute window. Production counters use conditional writes in the existing private Blob store, under HMAC-derived names that do not expose raw IP addresses. If that store is unavailable, sign-in fails closed; local development without storage uses a bounded in-memory counter.
+1. `/admin/login` posts to `/api/auth/whop/start`, which stores the PKCE verifier and state in a ten-minute encrypted, HttpOnly cookie and redirects to Whop.
+2. `/api/auth/whop/callback` checks the state, exchanges the code, reads the Whop user ID from `/oauth/userinfo` and revokes the Whop refresh token. The site never stores Whop tokens.
+3. The server's `WHOP_API_KEY` looks the user up with `GET /api/v1/team_members?account_id=…&user_id=…&status=joined`. Only then is an encrypted eight-hour session cookie issued.
+4. Every admin page load and API call re-verifies membership with Whop, cached for at most 60 seconds per user. Removing someone from the Whop team revokes their access within a minute. If Whop can't be reached, access fails closed.
 
-Whop OAuth and live team-membership authorization are deferred in favor of the requested temporary shared login. The current merchant key can read joined team members, but creating an OAuth app requires `developer:create_app`; webhook configuration inspection requires `developer:manage_webhook`. A future Whop login must verify the authenticated user against joined team members of `biz_HqBscEcuZxTgaf`, not paid customer memberships.
+Sessions are bound to the business, the OAuth app ID and `ADMIN_SESSION_SECRET`. Changing any of them signs everyone out. Logout and price saves enforce same-origin requests. The former `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` shared login has been removed, and those variables are ignored.
 
 
 ## Paid-order Slack alerts
