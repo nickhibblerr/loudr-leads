@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Sign in | LOUDR Admin", robots: { index: false, follow: false } };
 
 const messages: Record<string, string> = {
-  invalid_credentials: "That username or password is incorrect. Please try again.",
+  not_team_member: "That Whop account isn’t on the Loudr Media team. Ask an owner to add you, then sign in again.",
+  whop_denied: "Whop sign-in was cancelled. Please try again.",
+  sign_in_expired: "Your sign-in session expired. Please try again.",
+  sign_in_failed: "We couldn’t complete Whop sign-in. Please try again.",
   configuration: "Admin sign-in is temporarily unavailable. Please try again shortly.",
   unavailable: "Admin sign-in is temporarily unavailable. Please try again shortly.",
 };
@@ -29,14 +32,10 @@ export default async function AdminLogin({ searchParams }: { searchParams: Promi
         <section className="admin-access-panel" aria-labelledby="sign-in-heading">
           <p className="eyebrow"><span className="eyebrow-line" /> Loudr Media</p>
           <h1 id="sign-in-heading">Admin sign-in<span className="accent-text">.</span></h1>
-          <p>Sign in to manage state pricing.</p>
+          <p>Sign in with your Whop account. Only Loudr Media team members can manage state pricing.</p>
           {(error || accessMessage) && <p className="form-error" role="alert">{error || accessMessage}</p>}
-          {configured ? <form action="/api/auth/login" method="post" className="admin-login-form">
-            <label htmlFor="admin-username">Username</label>
-            <input id="admin-username" name="username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required maxLength={128} />
-            <label htmlFor="admin-password">Password</label>
-            <input id="admin-password" name="password" type="password" autoComplete="current-password" required maxLength={512} />
-            <button type="submit" className="primary-button">Sign in</button>
+          {configured ? <form action="/api/auth/whop/start" method="post" className="admin-login-form">
+            <button type="submit" className="primary-button">Sign in with Whop</button>
           </form> : <a href="/admin/login" className="admin-secondary">Try again</a>}
         </section>
       </main>

@@ -31,7 +31,7 @@ export default async function AdminPage() {
           <AdminPricing />
         </> : <section className="admin-access-panel" aria-labelledby="access-heading">
           <h1 id="access-heading">{access.status === "forbidden" ? "Admin access required." : "We couldn’t verify your access."}</h1>
-          <p>{access.status === "forbidden" ? "Sign in with the admin account to manage lead prices." : "Access verification is temporarily unavailable. Try again shortly."}</p>
+          <p>{access.status === "forbidden" ? "Your Whop account is no longer on the Loudr Media team. Sign in with a team member account to manage lead prices." : "Access verification is temporarily unavailable. Try again shortly."}</p>
           {access.status === "forbidden" ? <form action="/api/auth/logout" method="post"><button type="submit" className="primary-button">Sign in again</button></form> : <a className="primary-button" href="/admin">Try again</a>}
         </section>}
       </main>
