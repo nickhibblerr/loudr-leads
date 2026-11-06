@@ -31,7 +31,7 @@ Configure these variables in `.env.local` for local development and in the inten
 | `WHOP_LEADS_PRODUCT_ID` | Dedicated LOUDR lead product (`prod_…`), matching production. |
 | `NEXT_PUBLIC_WHOP_ACCOUNT_ID` | Same merchant account, used by payment elements. |
 | `WHOP_WEBHOOK_SECRET` | Server-only signing secret for the payment webhook. |
-| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally; `https://loudr-leads.vercel.app` in production. |
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally; `https://loudrleadsdashboard.vercel.app` in production. |
 | `WHOP_OAUTH_CLIENT_ID` | Whop OAuth app for admin sign-in: `app_RaP619R6n2xjF2` ("LOUDR Leads Admin"). |
 | `WHOP_OAUTH_CLIENT_SECRET` | Optional; only if the OAuth app is changed to a confidential client. |
 | `ADMIN_SESSION_SECRET` | Independent random server-only secret for encrypted admin sessions. |
@@ -50,7 +50,7 @@ The Wire & ACH checkout enables only `bank_wire` and `us_bank_account`, and uses
 
 ## Deployment and fulfillment
 
-Production: `https://loudr-leads.vercel.app`, project `prj_laSEpueJ84xcCcFItcwPSWCFTnc1`, team `team_nJJFw2mdvFrhMqsbZGUEOqsc` (Tommy Chryst's projects). Deploy only to this project for this repository. The older repository README's Unlimited Scaling project is unrelated to this release.
+Production: `https://loudrleadsdashboard.vercel.app`, deployed from the `master` branch of `nickhibblerr/loudr-leads`. `https://loudr-leads.vercel.app` belongs to the original upstream project and does not serve this fork. The older Unlimited Scaling project is unrelated to this release.
 
 The signed `payment.succeeded` webhook retrieves the payment and all purchased plans from Whop, verifies a paid order for the configured business/product, and sends a Slack alert containing state, quantity, quoted USD order total, payment choice and payment ID. Checkout-provided metadata and return-page query parameters are not authority. Notifications do **not** deliver leads or credit balances.
 
@@ -70,7 +70,7 @@ Each save sends changed states and the last-read ETag. Conditional writes reject
 
 Admin access requires **Sign in with Whop**, and only joined team members of Loudr Media (`biz_HqBscEcuZxTgaf`) are allowed. Paid customers, pending invites, agents and Whop's view-only Partner role are refused. Both `/admin` and `/api/admin/prices` reject everyone else.
 
-Sign-in uses the hidden Whop OAuth app "LOUDR Leads Admin" (`app_RaP619R6n2xjF2`, a public OAuth 2.1 + PKCE client). Its allowed redirect URIs are `https://loudr-leads.vercel.app/api/auth/whop/callback` and `http://localhost:3000/api/auth/whop/callback`; add any other origin in the Whop developer dashboard before using it.
+Sign-in uses the hidden Whop OAuth app "LOUDR Leads Admin" (`app_RaP619R6n2xjF2`, a public OAuth 2.1 + PKCE client). Its allowed redirect URIs are `https://loudrleadsdashboard.vercel.app/api/auth/whop/callback` and `http://localhost:3000/api/auth/whop/callback`; add any other origin in the Whop developer dashboard before using it.
 
 1. `/admin/login` posts to `/api/auth/whop/start`, which stores the PKCE verifier and state in a ten-minute encrypted, HttpOnly cookie and redirects to Whop.
 2. `/api/auth/whop/callback` checks the state, exchanges the code, reads the Whop user ID from `/oauth/userinfo` and revokes the Whop refresh token. The site never stores Whop tokens.
@@ -89,7 +89,7 @@ Every verified payment is saved as an immutable private Blob record at `orders/p
 To enable Slack delivery:
 
 1. Create a Slack Incoming Webhook for the intended channel and set its URL as the Vercel production secret `SLACK_LEAD_ORDERS_WEBHOOK_URL`.
-2. Configure the Loudr Media Whop webhook for `payment.succeeded` at `https://loudr-leads.vercel.app/api/webhooks/whop`. Its signing secret must match `WHOP_WEBHOOK_SECRET`. The API key must be able to retrieve payments and plans.
+2. Configure the Loudr Media Whop webhook for `payment.succeeded` at `https://loudrleadsdashboard.vercel.app/api/webhooks/whop`. Its signing secret must match `WHOP_WEBHOOK_SECRET`. The API key must be able to retrieve payments and plans.
 3. Redeploy after adding the secret, then verify delivery using a real paid order/replayed paid-order event. No synthetic event with an invented payment ID can pass payment verification. The current API key lacks webhook-management permission, so dashboard configuration must be confirmed separately.
 
 When Slack is configured, the handler waits for delivery before returning success. Missing payment-verification configuration, storage/provider failures or an in-progress delivery return 503 for Whop to retry. Pending bank transfers are not announced as paid. Unrelated businesses/products are ignored.
