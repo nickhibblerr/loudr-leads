@@ -1,6 +1,8 @@
 import { requireAdmin, checkMutationOrigin } from "@/lib/admin-auth";
 import { PricingError, readRateCard, saveRateChanges } from "@/lib/pricing-store";
-import { MAX_PRICING_BODY_LENGTH } from "@/lib/rate-card";
+import { MAX_PRICING_BODY_LENGTH, type RateCard } from "@/lib/rate-card";
+import { WhopClient } from "@whop/sdk";
+import { syncLeadPlanPrices } from "@/lib/lead-checkout";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,8 +47,25 @@ export async function PATCH(request: Request) {
   }
   try {
     const body = input as Record<string, unknown>;
-    return Response.json(await saveRateChanges(body.version, body.changes), { headers });
+    const card = await saveRateChanges(body.version, body.changes);
+    return Response.json({ ...card, whopPlansSynced: await syncWhopPrices(card) }, { headers });
   } catch (error) {
     return failure(error);
+  }
+}
+
+// Saved prices are the source of truth. Repricing the Whop plans keeps the product's plans
+// in step; if Whop is unreachable, checkout reprices each state's plan on its next order.
+async function syncWhopPrices(card: RateCard): Promise<boolean> {
+  try {
+    const token = process.env.WHOP_API_KEY;
+    const accountId = process.env.WHOP_ACCOUNT_ID;
+    const productId = process.env.WHOP_LEADS_PRODUCT_ID;
+    if (!token || !accountId || !productId) return false;
+    await syncLeadPlanPrices(new WhopClient({ token }), accountId, productId, card.states);
+    return true;
+  } catch (error) {
+    console.error("Whop lead plan prices could not be synced", { message: error instanceof Error ? error.message : "unknown" });
+    return false;
   }
 }

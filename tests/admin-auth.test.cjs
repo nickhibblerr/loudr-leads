@@ -228,6 +228,7 @@ test('admin API reads and writes require a team-member session', async () => {
   const storageCalls = [];
   const route = loadTypeScript('app/api/admin/prices/route.ts', {
     '@/lib/admin-auth': f.guard, '@/lib/rate-card': rateCard,
+    '@whop/sdk': { WhopClient: class {} }, '@/lib/lead-checkout': { syncLeadPlanPrices: async () => 0 },
     '@/lib/pricing-store': {
       PricingError: rateCard.PricingError,
       readRateCard: async () => { storageCalls.push('read'); return rateCard.defaultRateCard(); },

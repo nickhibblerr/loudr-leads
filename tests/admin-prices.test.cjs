@@ -13,6 +13,8 @@ function routes({ denied = false, originDenied = false, failure = null } = {}) {
       checkMutationOrigin: () => originDenied ? Response.json({ error: 'Wrong origin' }, { status: 403 }) : null,
     },
     '@/lib/rate-card': card,
+    '@whop/sdk': { WhopClient: class {} },
+    '@/lib/lead-checkout': { syncLeadPlanPrices: async (_client, _account, _product, states) => { calls.push({ synced: states.length }); return 0; } },
     '@/lib/pricing-store': {
       PricingError: card.PricingError,
       async readRateCard() { calls.push('read'); if (failure) throw failure; return result; },
@@ -52,7 +54,9 @@ test('public prices and admin saves are not cacheable and use the persisted card
   const saved = await fixture.admin.PATCH(request(update));
   assert.equal(saved.status, 200);
   assert.equal(saved.headers.get('cache-control'), 'no-store');
-  assert.equal((await saved.json()).version, 'saved');
+  const body = await saved.json();
+  assert.equal(body.version, 'saved');
+  assert.equal(body.whopPlansSynced, false, 'without Whop credentials the save succeeds and reports no sync');
   assert.deepEqual(JSON.parse(JSON.stringify(fixture.calls[1])), update);
 });
 

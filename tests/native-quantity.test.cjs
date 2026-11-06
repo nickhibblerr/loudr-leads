@@ -63,3 +63,31 @@ test('webhook records native cart orders before Slack, and retains them when Sla
  env.SLACK_LEAD_ORDERS_WEBHOOK_URL='configured';assert.equal((await route.POST(req())).status,200);assert.equal(delivered,1);
  failStore=true;assert.equal((await route.POST(req())).status,503);assert.equal(delivered,1);
 });
+
+test('admin price sync reprices existing state lead plans in place and leaves others alone',async()=>{
+ const h=harness();const updates=[];h.client.plans.update=async({id,...changes})=>{updates.push(id);const p=h.plans.find(p=>p.id===id);Object.assign(p,changes);return p;};
+ await native.getLeadCheckout(h.client,'biz_test','prod_test',pricing.calculateLeadQuote('AL',5,undefined,'card'));
+ await native.getLeadCheckout(h.client,'biz_test','prod_test',pricing.calculateLeadQuote('AL',2,undefined,'bank'));
+ await native.getLeadCheckout(h.client,'biz_test','prod_test',pricing.calculateLeadQuote('TX',2,undefined,'bank'));
+ const fee=h.plans.find(p=>p.metadata.item_role==='card_fee');const feePrice=fee.initial_price;
+ const states=pricing.LEAD_STATES.map(s=>s.code==='AL'?{...s,price:410}:s.code==='TX'?{...s,price:null}:s);
+ assert.equal(await native.syncLeadPlanPrices(h.client,'biz_test','prod_test',states),2);
+ const al=h.plans.filter(p=>p.metadata.state==='AL'&&p.metadata.item_role==='leads');
+ assert.equal(al.length,2);for(const p of al){assert.equal(p.initial_price,410);assert.equal(p.metadata.price_per_lead,'410');}
+ assert.equal(h.plans.find(p=>p.metadata.state==='TX').initial_price,500,'sold-out states keep their plan untouched');
+ assert.equal(fee.initial_price,feePrice,'per-order card fee items are never repriced');
+ assert.equal(await native.syncLeadPlanPrices(h.client,'biz_test','prod_test',states),0,'already-synced plans are not updated again');
+ const before=h.plans.length;const next=await native.getLeadCheckout(h.client,'biz_test','prod_test',pricing.calculateLeadQuote('AL',3,states,'bank'));
+ assert.equal(h.plans.length,before,'checkout reuses the repriced plan');assert.equal(next.planId,al.find(p=>p.metadata.payment_mode==='bank').id);
+});
+test('orders paid before a price change still verify after the plan is repriced',async()=>{
+ for(const mode of ['bank','card']){
+  const f=await fixture(mode);const lead=f.plans.find(p=>p.metadata.item_role==='leads');
+  lead.initial_price=999;lead.metadata={...lead.metadata,price_per_lead:'999'};
+  const o=orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test');
+  assert.equal(o.quantity,5);assert.equal(o.orderTotalUsd,f.quote.total);
+ }
+ const f=await fixture('card');f.payment.currency='eur';for(const line of f.payment.line_items){line.subtotal.currency='eur';line.subtotal.amount='10.00';}
+ const lead=f.plans.find(p=>p.metadata.item_role==='leads');lead.initial_price=999;lead.metadata={...lead.metadata,price_per_lead:'999'};
+ assert.equal(orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test').orderTotalUsd,f.quote.total,'local-currency card orders use the per-order fee item price');
+});
