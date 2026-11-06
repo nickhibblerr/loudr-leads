@@ -31,7 +31,7 @@ Configure these variables in `.env.local` for local development and in the inten
 | `WHOP_LEADS_PRODUCT_ID` | Dedicated LOUDR lead product (`prod_…`), matching production. |
 | `NEXT_PUBLIC_WHOP_ACCOUNT_ID` | Same merchant account, used by payment elements. |
 | `WHOP_WEBHOOK_SECRET` | Server-only signing secret for the payment webhook. |
-| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally; `https://loudr-leads.vercel.app` in production. |
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally; `https://loudrleadsdashboard.vercel.app` in production. |
 | `WHOP_OAUTH_CLIENT_ID` | Whop OAuth app for admin sign-in: `app_RaP619R6n2xjF2` ("LOUDR Leads Admin"). |
 | `WHOP_OAUTH_CLIENT_SECRET` | Optional; only if the OAuth app is changed to a confidential client. |
 | `ADMIN_SESSION_SECRET` | Independent random server-only secret for encrypted admin sessions. |
@@ -42,15 +42,15 @@ The payment business is Loudr Media (`biz_HqBscEcuZxTgaf`), using its dedicated 
 
 `/api/checkout` and the lower-level `/api/pay` accept `state`, `quantity` (or `leadCount`), `paymentMode` (`bank` or `card`, defaulting to `bank` when omitted), and optional boolean `forceUsd`. If both quantity aliases are present, they must match. Amounts, unit prices, fee percentages and totals supplied by clients cannot alter the server price. Invalid payment modes, unknown or sold-out states, missing/fractional quantities, quantities above 1,000 and non-USD nominal prices are rejected before calling Whop.
 
-Each state has price-specific per-lead Whop plans with native multiple quantities enabled. `/api/checkout` returns `items: [{ plan, quantity }]`; both Whop Elements and `/api/pay` send native quantities. A five-lead order at $500 uses a $500 plan with quantity 5. A card order adds a separate fee item with quantity 1, priced at 2.7% of the whole lead subtotal, rounded once to cents. This preserves totals such as Alabama $325 × 5 + $43.88, without accumulating per-unit rounding differences. Zero rounded fees omit the fee item.
+Each state has one per-lead Whop plan per checkout type (Wire & ACH, Card, Card in USD) with native multiple quantities enabled. `/api/checkout` returns `items: [{ plan, quantity }]`; both Whop Elements and `/api/pay` send native quantities. A five-lead order at $500 uses a $500 plan with quantity 5. A card order adds a separate fee item with quantity 1, priced at 2.7% of the whole lead subtotal, rounded once to cents. This preserves totals such as Alabama $325 × 5 + $43.88, without accumulating per-unit rounding differences. Zero rounded fees omit the fee item.
 
-Unit plans carry `pricing_model: unit_quantity_v1`, `item_role: leads`, state, historical price per lead and payment/pricing mode; quantity belongs to the receipt, not the reusable unit plan. Fee plans carry `item_role: card_fee` and the quantity/fee they cover. The lead SKU is `LOUDR-LEADS-<state>`. Admin changes select new price-specific plans without rewriting old plans. Quantity changes reuse the same lead plan at the same state/rate/mode. Legacy whole-order plans remain readable for earlier payments but are never selected for new checkouts.
+Unit plans carry `pricing_model: unit_quantity_v1`, `item_role: leads`, state, historical price per lead and payment/pricing mode; quantity belongs to the receipt, not the reusable unit plan. Fee plans carry `item_role: card_fee` and the quantity/fee they cover. The lead SKU is `LOUDR-LEADS-<state>`. When an admin saves a new price, `/api/admin/prices` reprices that state's existing lead plans in place on Whop (price and `price_per_lead` metadata); sold-out states are left untouched. If Whop is unreachable during the save, checkout reprices the state's plan on its next order. Quantity and price changes reuse the same lead plan per state and mode; card-fee items stay per order and are never repriced. Legacy whole-order plans remain readable for earlier payments but are never selected for new checkouts.
 
 The Wire & ACH checkout enables only `bank_wire` and `us_bank_account`, and uses USD because those methods require it. The Card checkout enables only `card`; Whop can display eligible local currencies, and Make USD selects a separate non-adaptive card plan. Both configurations disable platform defaults and exclude the other checkout's methods. Whop still applies account and buyer eligibility rules.
 
 ## Deployment and fulfillment
 
-Production: `https://loudr-leads.vercel.app`, project `prj_laSEpueJ84xcCcFItcwPSWCFTnc1`, team `team_nJJFw2mdvFrhMqsbZGUEOqsc` (Tommy Chryst's projects). Deploy only to this project for this repository. The older repository README's Unlimited Scaling project is unrelated to this release.
+Production: `https://loudrleadsdashboard.vercel.app` (alias `https://loudr-leads-dashboard.vercel.app`), Vercel project `loudrleadsdashboard` (`prj_eabgyaXm6OkqsJNmeb9G7syvAMAs`), team `team_U6deUEDDpSoDfLg76eaWz6LN`. Deploy only to this project for this repository. `NEXT_PUBLIC_SITE_URL` must stay `https://loudrleadsdashboard.vercel.app` because it is the origin registered as the Whop OAuth redirect. The earlier `loudr-leads` project on another team is no longer the deploy target.
 
 The signed `payment.succeeded` webhook retrieves the payment and all purchased plans from Whop, verifies a paid order for the configured business/product, and sends a Slack alert containing state, quantity, quoted USD order total, payment choice and payment ID. Checkout-provided metadata and return-page query parameters are not authority. Notifications do **not** deliver leads or credit balances.
 
@@ -70,7 +70,7 @@ Each save sends changed states and the last-read ETag. Conditional writes reject
 
 Admin access requires **Sign in with Whop**, and only joined team members of Loudr Media (`biz_HqBscEcuZxTgaf`) are allowed. Paid customers, pending invites, agents and Whop's view-only Partner role are refused. Both `/admin` and `/api/admin/prices` reject everyone else.
 
-Sign-in uses the hidden Whop OAuth app "LOUDR Leads Admin" (`app_RaP619R6n2xjF2`, a public OAuth 2.1 + PKCE client). Its allowed redirect URIs are `https://loudr-leads.vercel.app/api/auth/whop/callback` and `http://localhost:3000/api/auth/whop/callback`; add any other origin in the Whop developer dashboard before using it.
+Sign-in uses the hidden Whop OAuth app "LOUDR Leads Admin" (`app_RaP619R6n2xjF2`, a public OAuth 2.1 + PKCE client). Its allowed redirect URIs are `https://loudrleadsdashboard.vercel.app/api/auth/whop/callback` and `http://localhost:3000/api/auth/whop/callback`; add any other origin in the Whop developer dashboard before using it.
 
 1. `/admin/login` posts to `/api/auth/whop/start`, which stores the PKCE verifier and state in a ten-minute encrypted, HttpOnly cookie and redirects to Whop.
 2. `/api/auth/whop/callback` checks the state, exchanges the code, reads the Whop user ID from `/oauth/userinfo` and revokes the Whop refresh token. The site never stores Whop tokens.
@@ -82,14 +82,14 @@ Sessions are bound to the business, the OAuth app ID and `ADMIN_SESSION_SECRET`.
 
 ## Paid-order Slack alerts
 
-The webhook derives lead count from the paid receipt's lead line item, verifies its state against the merchant-created unit plan and validates the separate card-fee item without counting it as a lead. It supports cart receipts whose top-level `plan_id`/`product_id` are null. Historical whole-order payments use their original plan metadata. Buyer-supplied metadata is never fulfillment authority. USD item amounts are checked against the original price; adaptive currency receipts retain their authoritative native quantity and currency.
+The webhook derives lead count from the paid receipt's lead line item, verifies its state against the merchant-created unit plan and validates the separate card-fee item without counting it as a lead. It supports cart receipts whose top-level `plan_id`/`product_id` are null. Historical whole-order payments use their original plan metadata. Buyer-supplied metadata is never fulfillment authority. Because lead plans are repriced in place, the price paid is taken from the receipt (the USD lead line, or for local-currency card payments the per-order fee item), never from the plan's current price; adaptive currency receipts retain their authoritative native quantity and currency.
 
 Every verified payment is saved as an immutable private Blob record at `orders/paid/<payment-id>.json` before Slack delivery. If Slack is not configured, the webhook acknowledges the saved order with `delivery: not_configured`; Slack is not claimed as delivered. Once configured, replay the earlier `payment.succeeded` events in Whop to send those saved orders. There is no automatic backlog drain.
 
 To enable Slack delivery:
 
 1. Create a Slack Incoming Webhook for the intended channel and set its URL as the Vercel production secret `SLACK_LEAD_ORDERS_WEBHOOK_URL`.
-2. Configure the Loudr Media Whop webhook for `payment.succeeded` at `https://loudr-leads.vercel.app/api/webhooks/whop`. Its signing secret must match `WHOP_WEBHOOK_SECRET`. The API key must be able to retrieve payments and plans.
+2. Configure the Loudr Media Whop webhook for `payment.succeeded` at `https://loudrleadsdashboard.vercel.app/api/webhooks/whop`. Its signing secret must match `WHOP_WEBHOOK_SECRET`. The API key must be able to retrieve payments and plans.
 3. Redeploy after adding the secret, then verify delivery using a real paid order/replayed paid-order event. No synthetic event with an invented payment ID can pass payment verification. The current API key lacks webhook-management permission, so dashboard configuration must be confirmed separately.
 
 When Slack is configured, the handler waits for delivery before returning success. Missing payment-verification configuration, storage/provider failures or an in-progress delivery return 503 for Whop to retry. Pending bank transfers are not announced as paid. Unrelated businesses/products are ignored.

@@ -28,7 +28,7 @@ function harness() {
   let card = { version: 'initial', updatedAt: null, states: leads.LEAD_STATES.map((state) => ({ ...state })) };
   let storageError = false;
   let version = 0;
-  const calls = { clients: 0, reads: 0, lists: 0, creates: [], confirmations: 0, retrieves: 0, payments: [] };
+  const calls = { clients: 0, reads: 0, lists: 0, creates: [], updates: [], confirmations: 0, retrieves: 0, payments: [] };
   const savedPlans = [];
   const client = {
     plans: {
@@ -39,7 +39,12 @@ function harness() {
         savedPlans.push(plan);
         return plan;
       },
-      update: async () => { throw new Error('New prices must not overwrite existing plans.'); },
+      update: async ({ id, ...changes }) => {
+        calls.updates.push({ id, ...changes });
+        const plan = savedPlans.find((item) => item.id === id);
+        Object.assign(plan, changes);
+        return plan;
+      },
       retrieve: async ({ id }) => { calls.retrieves++; return savedPlans.find((plan) => plan.id === id); },
     },
     confirmationTokens: { retrieve: async ({ id }) => { calls.confirmations++; return { status: 'pending', payment_method_preview: { type: id === 'ctok_card' ? 'card' : 'bank_wire' } }; } },
@@ -77,7 +82,7 @@ function harness() {
   return {
     checkout: loadTypeScript('app/api/checkout/route.ts', dependencies, globals).POST,
     pay: loadTypeScript('app/api/pay/route.ts', dependencies, globals).POST,
-    calls,
+    calls, savedPlans,
     get card() { return card; },
     setPrice(code, price) {
       card = { version: `saved-${++version}`, updatedAt: '2026-10-30T00:00:00.000Z',
@@ -114,7 +119,7 @@ test('saved rates override defaults in checkout and payment metadata using integ
   assert.equal(smallOrder.quote.total, 2.03);
 });
 
-test('increased and reduced prices bypass old cached plans and old plans cannot be charged', async () => {
+test('a price change reprices the state plan in place and stale quotes cannot be charged', async () => {
   const h = harness();
   let previous = await checkout(h);
   assert.equal(previous.quote.total, 1000);
@@ -124,24 +129,22 @@ test('increased and reduced prices bypass old cached plans and old plans cannot 
   for (const price of [625, 375]) {
     h.setPrice('TX', price);
     const current = await checkout(h);
-    assert.notEqual(current.planId, previous.planId);
+    assert.equal(current.planId, previous.planId, 'the state keeps one lead plan');
     assert.equal(current.quote.unitPrice, price);
     assert.equal(current.quote.total, price * 2);
+    assert.equal(h.savedPlans.find((plan) => plan.id === current.planId).initial_price, price);
+    assert.equal(h.savedPlans.find((plan) => plan.id === current.planId).metadata.price_per_lead, String(price));
     assert.equal((await checkout(h)).planId, current.planId);
     const paymentCount = h.calls.payments.length;
-    for (const priceVersion of [undefined, h.card.version]) {
-      const response = await h.pay(paymentRequest(previous, { priceVersion }));
-      assert.equal(response.status, 400);
-      assert.equal(h.calls.payments.length, paymentCount, 'obsolete plans must never create a payment');
-    }
+    const stale = await h.pay(paymentRequest(previous));
+    assert.equal(stale.status, 409, 'a quote made at the old price must be re-confirmed');
+    assert.equal(h.calls.payments.length, paymentCount, 'stale quotes must never create a payment');
     assert.equal((await h.pay(paymentRequest(current))).status, 200);
     previous = current;
   }
-  assert.equal(h.calls.creates.length, 3, 'each distinct rate should create one unit plan');
-  assert.equal(h.calls.creates.length, 3);
-  assert.equal(new Set(h.calls.creates.map(({ options }) => options.idempotencyKey)).size, 3);
+  assert.equal(h.calls.creates.length, 1, 'price changes must not add plans');
+  assert.equal(h.calls.updates.length, 2);
 });
-
 test('unit plans remain specific to state and reuse the same price for different quantities', async () => {
   const h = harness();
   const alabama = await checkout(h, 'AL', 1);
@@ -237,8 +240,9 @@ test('card and bank cached plans remain distinct and preserve current saved rate
   assert.equal(changed.quote.amountCents, 7650);
   assert.equal(changed.quote.feeCents, 207);
   assert.equal(changed.quote.totalCents, 7857);
-  assert.notEqual(changed.planId, card.planId);
-  assert.equal((await h.pay(paymentRequest(card, { priceVersion: h.card.version }))).status, 400);
+  assert.equal(changed.planId, card.planId, 'the card plan is repriced, not replaced');
+  assert.equal(h.savedPlans.find((plan) => plan.id === card.planId).initial_price, 25.5);
+  assert.equal((await h.pay(paymentRequest(card))).status, 409);
 });
 
 test('zero rounded surcharge still separates plans and both modes retain identity under Make USD', async () => {

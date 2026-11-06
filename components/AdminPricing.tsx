@@ -133,10 +133,13 @@ export default function AdminPricing() {
         setError("Prices changed in another session. Your edits are still here. Reload the latest prices before saving again.");
         return;
       }
+      const synced = response.ok ? (await response.clone().json().catch(() => ({})))?.whopPlansSynced : undefined;
       const next = await readCard(response);
       setCard(next);
       setDrafts(draftsFor(next));
-      setMessage(`Saved ${dirtyCount} ${dirtyCount === 1 ? "state" : "states"}. New checkouts use these prices.`);
+      setMessage(`Saved ${dirtyCount} ${dirtyCount === 1 ? "state" : "states"}. ${synced === false
+        ? "New checkouts use these prices; Whop plans will update on each state's next order."
+        : "Whop lead plans now show these prices, and new checkouts use them."}`);
     } catch (cause) {
       showFailure(cause, "Your changes weren’t saved. Please try again.", true);
     } finally { setSaving(false); }

@@ -89,6 +89,7 @@ test('start redirects to Whop OAuth with PKCE and a short-lived encrypted flow c
   assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
   assert.match(url.searchParams.get('code_challenge'), /^[A-Za-z0-9_-]{43}$/);
   assert.match(url.searchParams.get('scope'), /openid/);
+  assert(url.searchParams.get('nonce').length >= 32, 'openid requests must carry a nonce');
   assert(url.searchParams.get('state').length >= 32);
   assert(flow);
   const attributes = setCookies(response).find(value => value.startsWith(`${flowCookie}=`));
@@ -176,6 +177,8 @@ test('a cancelled authorization or failed token exchange does not sign in', asyn
   const { flow, url } = await f.start();
   const denied = await f.callback({ error: 'access_denied', state: url.searchParams.get('state') }, flow);
   assert.equal(location(denied).searchParams.get('error'), 'whop_denied');
+  const rejected = await f.callback({ error: 'invalid_request', state: url.searchParams.get('state') }, flow);
+  assert.equal(location(rejected).searchParams.get('error'), 'sign_in_failed');
   const g = await fixture({}, { tokenStatus: 400 });
   const { response, cookie } = await g.signIn();
   assert.equal(location(response).searchParams.get('error'), 'sign_in_failed');
@@ -225,6 +228,7 @@ test('admin API reads and writes require a team-member session', async () => {
   const storageCalls = [];
   const route = loadTypeScript('app/api/admin/prices/route.ts', {
     '@/lib/admin-auth': f.guard, '@/lib/rate-card': rateCard,
+    '@whop/sdk': { WhopClient: class {} }, '@/lib/lead-checkout': { syncLeadPlanPrices: async () => 0 },
     '@/lib/pricing-store': {
       PricingError: rateCard.PricingError,
       readRateCard: async () => { storageCalls.push('read'); return rateCard.defaultRateCard(); },

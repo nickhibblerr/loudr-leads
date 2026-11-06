@@ -1,7 +1,7 @@
 import type { Whop } from "@whop/sdk";
 import { calculateLeadQuote, LEAD_STATES } from "@/lib/lead-pricing";
 import { requestedPaymentMode } from "@/lib/payment-methods";
-import { isLeadItemPlan, LEAD_PRICING_MODEL } from "@/lib/lead-checkout";
+import { isLeadItemPlan, isPurchasedLeadPlan, LEAD_PRICING_MODEL } from "@/lib/lead-checkout";
 import { isTopUpPlanForAmount } from "@/lib/whop-plans";
 
 // Use merchant-created plan metadata and historical prices, never buyer metadata.
@@ -33,12 +33,29 @@ export function paidLeadOrder(payment: Whop.Payment, purchasedPlans: Whop.Plan |
   const line = lines.find((item) => item.plan_id === plan.id);
   const m = plan.metadata!;
   const state = LEAD_STATES.find((item) => item.code === m.state);
-  if (!line || !state || typeof m.price_per_lead !== "string" || !/^\d+(?:\.\d{1,2})?$/.test(m.price_per_lead) ||
+  if (!line || !state ||
     (m.payment_mode !== "bank" && m.payment_mode !== "card") ||
     (m.pricing_mode !== "forced_usd" && m.pricing_mode !== "adaptive")) throw new Error("Invalid lead item.");
-  const quote = calculateLeadQuote(state.code, line.quantity, [{ ...state, price: Number(m.price_per_lead) }], m.payment_mode);
+  // Lead plans are repriced in place when the admin changes a state's price, so the price
+  // paid comes from this order, never from the plan's current price: the USD amount Whop
+  // charged for the lead line, or for a local-currency card payment, the per-order card fee
+  // item (which is never repriced).
+  const feePlan = plans.find((candidate) => candidate.id !== plan.id);
+  const amount = line.subtotal?.amount;
+  if (!Number.isInteger(line.quantity) || line.quantity < 1) throw new Error("Invalid lead quantity.");
+  let unitPrice: number;
+  if (line.subtotal?.currency === "usd" && typeof amount === "string" && /^\d+(?:\.\d+)?$/.test(amount)) {
+    const cents = Math.round(Number(amount) * 100);
+    if (cents % line.quantity !== 0) throw new Error("Lead item amount does not match quantity.");
+    unitPrice = cents / line.quantity / 100;
+  } else {
+    const paid = feePlan?.metadata?.price_per_lead;
+    if (typeof paid !== "string" || !/^\d+(?:\.\d{1,2})?$/.test(paid)) throw new Error("Lead item amount unavailable.");
+    unitPrice = Number(paid);
+  }
+  const quote = calculateLeadQuote(state.code, line.quantity, [{ ...state, price: unitPrice }], m.payment_mode);
   const forceUsd = m.pricing_mode === "forced_usd";
-  if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd) || lines.length !== (quote.feeCents > 0 ? 2 : 1)) throw new Error("Lead item does not match receipt.");
+  if (!isPurchasedLeadPlan(plan, accountId, productId, quote, forceUsd) || lines.length !== (quote.feeCents > 0 ? 2 : 1)) throw new Error("Lead item does not match receipt.");
   for (const item of lines) {
     const itemPlan = plans.find((candidate) => candidate.id === item.plan_id);
     const isLead = item.plan_id === plan.id;
