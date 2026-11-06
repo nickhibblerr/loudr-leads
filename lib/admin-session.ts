@@ -125,10 +125,12 @@ export async function handleStart(request: Request): Promise<Response> {
   try {
     const state = randomBytes(24).toString("base64url");
     const verifier = randomBytes(48).toString("base64url");
+    // Whop rejects an `openid` authorization request that carries no nonce.
+    const nonce = randomBytes(24).toString("base64url");
     const flow = await encrypt(config, { state, verifier }, FLOW_AUDIENCE, FLOW_SECONDS);
     const params = new URLSearchParams({
       response_type: "code", client_id: config.clientId, redirect_uri: config.redirectUri, scope: "openid profile",
-      state, code_challenge: sha256Base64url(verifier), code_challenge_method: "S256",
+      state, nonce, code_challenge: sha256Base64url(verifier), code_challenge_method: "S256",
     });
     return redirect(`${WHOP_OAUTH}/authorize?${params}`, cookie(config, config.flowCookie, flow, FLOW_SECONDS));
   } catch { return unavailable(); }
@@ -194,7 +196,12 @@ export async function handleCallback(request: Request): Promise<Response> {
   } catch { return fail("sign_in_expired"); }
   const returnedState = params.get("state");
   if (!returnedState || params.getAll("state").length !== 1 || !sameSecret(returnedState, flow.state)) return fail("sign_in_expired");
-  if (params.get("error")) return fail("whop_denied");
+  const whopError = params.get("error");
+  if (whopError) {
+    // Only an explicit refusal is a cancellation; anything else is a request or configuration error.
+    console.warn("Whop OAuth returned an error", { error: whopError.slice(0, 64), description: (params.get("error_description") ?? "").slice(0, 300) });
+    return fail(whopError === "access_denied" ? "whop_denied" : "sign_in_failed");
+  }
   const code = params.get("code");
   if (!code || code.length > 2048 || params.getAll("code").length !== 1) return fail("sign_in_failed");
 
