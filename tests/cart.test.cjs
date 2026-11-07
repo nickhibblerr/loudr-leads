@@ -145,3 +145,33 @@ test('receipts for orders placed before carts (state-specific fee items) still v
   assert.deepEqual(plain(o.items), [{ state: 'AL', stateName: 'Alabama', quantity: 5 }]); assert.equal(o.orderTotalUsd, 1668.88);
   assert.equal(w.plans.length, 0);
 });
+
+test('Wire checkout offers wire only; existing Wire & ACH state plans are switched to wire in place', async () => {
+  const w = whop();
+  const quote = pricing.calculateLeadQuote('TX', 2, undefined, 'bank');
+  const old = { account_id: 'biz_test', product_id: 'prod_test', currency: 'usd', plan_type: 'one_time', visibility: 'quick_link', adaptive_pricing_enabled: false,
+    allow_multiple_quantity: true, initial_price: 500, title: 'TX lead (Wire & ACH)', id: 'plan_old', account: { id: 'biz_test' }, product: { id: 'prod_test' },
+    payment_method_configuration: { enabled: ['bank_wire', 'us_bank_account'], disabled: ['card', 'crypto', 'eu_bank_transfer', 'sepa_debit', 'us_bank_transfer'], include_platform_defaults: false },
+    metadata: native.leadItemMetadata(quote, true) };
+  w.plans.push(old);
+  const config = methods.paymentConfigurationFor('bank');
+  assert.deepEqual(plain(config.enabled), ['bank_wire']);
+  assert(config.disabled.includes('us_bank_account') && methods.paymentConfigurationFor('card').disabled.includes('us_bank_account'));
+  const checkout = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cartLib.calculateCartQuote([{ state: 'TX', quantity: 2 }], undefined, 'bank'));
+  assert.equal(checkout.items[0].plan, 'plan_old', 'the existing plan is kept');
+  assert.equal(w.plans.length, 1);
+  assert.deepEqual(plain(old.payment_method_configuration.enabled), ['bank_wire']);
+  assert.equal(old.title, 'TX lead (Wire)');
+  // The admin price sync also repairs plans nobody has ordered from since.
+  const ga = { ...old, id: 'plan_ga', title: 'GA lead (Wire & ACH)', initial_price: 400, payment_method_configuration: { enabled: ['bank_wire', 'us_bank_account'], disabled: [], include_platform_defaults: false },
+    metadata: native.leadItemMetadata(pricing.calculateLeadQuote('GA', 1, undefined, 'bank'), true) };
+  w.plans.push(ga);
+  assert.equal(await native.syncLeadPlanPrices(w.client, 'biz_test', 'prod_test', pricing.LEAD_STATES), 1);
+  assert.deepEqual(plain(ga.payment_method_configuration.enabled), ['bank_wire']); assert.equal(ga.title, 'GA lead (Wire)'); assert.equal(ga.initial_price, 400);
+  // A receipt paid while the plan still offered ACH verifies.
+  const payment = { id: 'pay_ach', status: 'paid', paid_at: '2026-11-05T00:00:00Z', account_id: 'biz_test', currency: 'usd',
+    line_items: [{ plan_id: 'plan_old', product_id: 'prod_test', quantity: 2, subtotal: { amount: '1000.00', currency: 'usd' } }] };
+  old.payment_method_configuration = { enabled: ['bank_wire', 'us_bank_account'], disabled: [], include_platform_defaults: false };
+  assert.equal(orders.paidLeadOrder(payment, [old], 'biz_test', 'prod_test').orderTotalUsd, 1000);
+  assert.match(orders.slackOrderMessage(orders.paidLeadOrder(payment, [old], 'biz_test', 'prod_test')).text, /Checkout: Wire\n/);
+});

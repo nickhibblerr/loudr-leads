@@ -30,7 +30,7 @@ export default async function CheckoutReturn({ searchParams }: { searchParams: S
           </div>
           <h1 id="return-heading">{succeeded ? "Funds received" : failed ? "Payment didn’t go through." : "Confirming your payment"}</h1>
           <p className="return-description">
-            {succeeded ? "Thank you for fueling your next phase of growth. Your lead order will be reviewed once your payment is verified." : failed ? "You weren’t charged. Head back to choose your leads and try again." : "Your payment is being confirmed. Bank transfers and wires typically take 1–3 business days to settle. Your lead order will be reviewed once the funds arrive."}
+            {succeeded ? "Thank you for fueling your next phase of growth. Your lead order will be reviewed once your payment is verified." : failed ? "You weren’t charged. Head back to choose your leads and try again." : "Your payment is being confirmed. Wire transfers typically take 1–3 business days to settle. Your lead order will be reviewed once the funds arrive."}
           </p>
           {(reference || succeeded) && <dl className="reference"><dt>Payment reference</dt><dd>{reference || "Your reference will appear in your payment receipt."}</dd></dl>}
           <Link href="/" className="primary-button">{failed ? "Try again" : "Back to LOUDR Media"}<ArrowIcon /></Link>

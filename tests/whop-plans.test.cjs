@@ -32,7 +32,7 @@ test('repairs method preferences on a matching top-up plan', async () => {
   const client = mockClient([planFor(quote, { payment_method_configuration: null })]);
   await getTopUpPlan(client, 'biz_test', 'prod_test', quote);
   assert.equal(client.calls[1][0], 'update');
-  assert.deepEqual(Array.from(client.calls[1][1].payment_method_configuration.enabled), ['bank_wire', 'us_bank_account']);
+  assert.deepEqual(Array.from(client.calls[1][1].payment_method_configuration.enabled), ['bank_wire']);
   assert.equal(client.calls[1][1].payment_method_configuration.include_platform_defaults, false);
 });
 test('creates the marked-up price and keeps fee and ad spend separate in metadata', async () => {
@@ -136,7 +136,7 @@ test('lead plan lookup ignores wrong merchant or product and never repairs a leg
 });
 
 test('lead checkout creates and repairs only the selected payment-method configuration', async () => {
-  for (const [mode, enabled] of [['bank', ['bank_wire', 'us_bank_account']], ['card', ['card']]]) {
+  for (const [mode, enabled] of [['bank', ['bank_wire']], ['card', ['card']]]) {
     const quote = leads.calculateLeadQuote('TX', 2, undefined, mode);
     const client = mockClient([]);
     await getTopUpPlan(client, 'biz_test', 'prod_test', quote);

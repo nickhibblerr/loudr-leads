@@ -158,18 +158,18 @@ test('card checkout and charge use the server surcharge despite client fee or to
 });
 
 test('confirmation token method must belong to the selected payment path', async () => {
-  for (const [paymentMode, type] of [['bank', 'card'], ['bank', 'sepa_debit'], ['card', 'bank_wire'], ['card', 'us_bank_account'], ['card', null]]) {
+  for (const [paymentMode, type] of [['bank', 'card'], ['bank', 'sepa_debit'], ['bank', 'us_bank_account'], ['card', 'bank_wire'], ['card', 'us_bank_account'], ['card', null]]) {
     const pay = payRoute({}, paymentMode, type);
     assert.equal((await pay.POST(request({ ...validPayment, paymentMode }))).status, 400);
     assert.equal(pay.charges.length, 0);
   }
-  for (const type of ['bank_wire', 'us_bank_account']) {
+  for (const type of ['bank_wire']) {
     const pay = payRoute({}, 'bank', type);
     assert.equal((await pay.POST(request({ ...validPayment, paymentMode: 'bank' }))).status, 200);
   }
 });
 
-test('Wire and ACH always prepare USD plans even when adaptive pricing is requested', async () => {
+test('Wire always prepares USD plans even when adaptive pricing is requested', async () => {
   for (const forceUsd of [undefined, false, true]) {
     const checkout = checkoutRoute();
     const response = await checkout.POST(request({ state: 'TX', quantity: 2, paymentMode: 'bank', forceUsd }));

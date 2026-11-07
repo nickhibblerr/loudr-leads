@@ -378,10 +378,10 @@ export default function TopUp() {
             {checkoutError && <p className="form-error checkout-error" role="alert">{checkoutError}</p>}
             <div className="payment-options" role="group" aria-label="Choose your payment method">
               <div className="payment-option">
-                <div className="payment-option-total" id="bank-total" aria-live="polite"><span>Wire &amp; ACH total</span><strong>{bankQuote ? formatAmount(bankQuote.total, currency) : "—"}</strong></div>
+                <div className="payment-option-total" id="bank-total" aria-live="polite"><span>Wire total</span><strong>{bankQuote ? formatAmount(bankQuote.total, currency) : "—"}</strong></div>
                 <p className="payment-option-note">No additional fee</p>
                 <button className="primary-button payment-option-button" type="submit" name="paymentMode" value="bank" aria-describedby="bank-total" disabled={preparing || !bankQuote || Boolean(pricingError)}>
-                  <span>{preparing && paymentMode === "bank" ? "Loading Wire & ACH…" : "Continue to Payment (Wire & ACH)"}</span><ArrowIcon />
+                  <span>{preparing && paymentMode === "bank" ? "Loading Wire…" : "Continue to Payment (Wire)"}</span><ArrowIcon />
                 </button>
               </div>
               <div className="payment-option payment-option-card">
@@ -397,7 +397,7 @@ export default function TopUp() {
         ) : (
           <>
             <h2 className="panel-title" ref={paymentTitleRef} tabIndex={-1}>One step from momentum.</h2>
-            <p className="panel-description">{paymentMode === "card" ? "Pay by card securely with Whop." : "Pay by wire or ACH securely with Whop."}</p>
+            <p className="panel-description">{paymentMode === "card" ? "Pay by card securely with Whop." : "Pay by wire transfer securely with Whop."}</p>
             <div className="payment-summary">
               {(quote?.lines ?? []).map((line) => (
                 <div key={line.state}><span>{line.stateName} · {leadsLabel(line.leadCount)}</span><span>{formatAmount(line.amount, currency)}</span></div>
@@ -414,7 +414,7 @@ export default function TopUp() {
                     <button className="text-button" type="button" onClick={() => { loadError.retry(); setLoadError(null); }}>Reload payment form</button>
                   </div>
                 )}
-                <p className="currency-note">{paymentMode === "bank" ? "Wire and ACH payments are charged in USD." : forceUsd ? "Payment currency is USD." : "Your card checkout and local-currency total appear below."}</p>
+                <p className="currency-note">{paymentMode === "bank" ? "Wire payments are charged in USD." : forceUsd ? "Payment currency is USD." : "Your card checkout and local-currency total appear below."}</p>
                 {elementError && <div className="payment-load-error" role="alert">
                   <p className="form-error">{elementError}</p>
                   <button className="text-button" type="button" onClick={() => { setElementError(null); setCheckoutLoading(true); setCheckoutVersion((version) => version + 1); }}>Reload checkout</button>

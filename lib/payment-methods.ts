@@ -6,17 +6,18 @@ export const CARD_FEE_BASIS_POINTS = 270;
 export function requestedPaymentMode(value: unknown): PaymentMode {
   if (value === undefined) return "bank";
   if (value === "bank" || value === "card") return value;
-  throw new Error("Choose Wire & ACH or Card as your payment option.");
+  throw new Error("Choose Wire or Card as your payment option.");
 }
 
-// Wire and ACH settle in USD; local-currency conversion would hide both methods.
+// Wires settle in USD; local-currency conversion would hide the wire method.
 export function effectiveForceUsd(mode: PaymentMode, requested = false): boolean {
   return mode === "bank" || requested;
 }
 
-const bankMethods: Whop.PaymentMethodTypes[] = ["bank_wire", "us_bank_account"];
+// Wire only: ACH (`us_bank_account`) is not offered and is disabled in both checkouts.
+const bankMethods: Whop.PaymentMethodTypes[] = ["bank_wire"];
 const cardMethods: Whop.PaymentMethodTypes[] = ["card"];
-const otherMethods: Whop.PaymentMethodTypes[] = ["sepa_debit", "eu_bank_transfer", "crypto", "us_bank_transfer"];
+const otherMethods: Whop.PaymentMethodTypes[] = ["us_bank_account", "sepa_debit", "eu_bank_transfer", "crypto", "us_bank_transfer"];
 
 export function paymentMethodsFor(mode: PaymentMode): Whop.PaymentMethodTypes[] {
   return mode === "card" ? [...cardMethods] : [...bankMethods];

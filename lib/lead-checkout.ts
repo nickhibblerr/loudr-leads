@@ -20,7 +20,7 @@ export function leadItemMetadata(quote: LeadQuote, forceUsd = false, role: ItemR
 
 // Matches everything that identifies an item except its price. A state's lead plan keeps
 // its ID and is repriced in place when the admin changes that state's price per lead.
-function isLeadItemFamily(plan: Whop.Plan | Whop.PlanListItem, accountId: string, productId: string, quote: LeadQuote, forceUsd = false, role: ItemRole = "leads") {
+function isLeadItemFamily(plan: Whop.Plan | Whop.PlanListItem, accountId: string, productId: string, quote: LeadQuote, forceUsd = false, role: ItemRole = "leads", anyMethods = false) {
   const expected: Record<string, string> = leadItemMetadata(quote, forceUsd, role);
   if (role === "leads") delete expected.price_per_lead;
   const config = paymentConfigurationFor(quote.paymentMode);
@@ -30,7 +30,11 @@ function isLeadItemFamily(plan: Whop.Plan | Whop.PlanListItem, accountId: string
     plan.adaptive_pricing_enabled === !effectiveForceUsd(quote.paymentMode, forceUsd) &&
     (role !== "leads" || (plan as QuantityPlan).allow_multiple_quantity === true) &&
     Object.entries(expected).every(([key, value]) => plan.metadata?.[key] === value) &&
-    actual?.include_platform_defaults === false &&
+    (anyMethods || hasMethods(actual, config));
+}
+
+function hasMethods(actual: Record<string, unknown> | null | undefined, config: ReturnType<typeof paymentConfigurationFor>) {
+  return actual?.include_platform_defaults === false &&
     ["enabled", "disabled"].every((key) => {
       const values = actual?.[key];
       const wanted = config[key as "enabled" | "disabled"];
@@ -44,13 +48,17 @@ export function isLeadItemPlan(plan: Whop.Plan | Whop.PlanListItem, accountId: s
     plan.metadata?.price_per_lead === String(quote.unitPrice);
 }
 
-/** A purchased lead line is checked against the plan's identity; its price comes from the receipt. */
+/**
+ * A purchased lead line is checked against the plan's identity; its price comes from the
+ * receipt. Payment methods are not compared: earlier Wire orders were placed while the
+ * plan also offered ACH, and the plan has been switched to wire only since.
+ */
 export function isPurchasedLeadPlan(plan: Whop.Plan | Whop.PlanListItem, accountId: string, productId: string, quote: LeadQuote, forceUsd = false) {
-  return isLeadItemFamily(plan, accountId, productId, quote, forceUsd, "leads");
+  return isLeadItemFamily(plan, accountId, productId, quote, forceUsd, "leads", true);
 }
 
 function leadPlanTitle(state: string, mode: LeadQuote["paymentMode"]) {
-  return `${state} lead (${mode === "card" ? "Card" : "Wire & ACH"})`;
+  return `${state} lead (${mode === "card" ? "Card" : "Wire"})`;
 }
 
 type ProductPlan = Whop.Plan | Whop.PlanListItem;
@@ -66,7 +74,9 @@ async function listProductPlans(whop: WhopClient, accountId: string, productId: 
 async function resolveLeadPlan(whop: WhopClient, plans: ProductPlan[], accountId: string, productId: string, quote: LeadQuote, forceUsd: boolean) {
   const exact = plans.find((plan) => isLeadItemPlan(plan, accountId, productId, quote, forceUsd));
   if (exact) return exact;
-  const samePlanOtherPrice = plans.find((plan) => isLeadItemFamily(plan, accountId, productId, quote, forceUsd));
+  // Same state and checkout, but an old price or old payment methods (e.g. Wire & ACH):
+  // update that plan in place rather than adding another.
+  const samePlanOtherPrice = plans.find((plan) => isLeadItemFamily(plan, accountId, productId, quote, forceUsd, "leads", true));
   if (samePlanOtherPrice) {
     const plan = await repriceLeadPlan(whop, samePlanOtherPrice, quote.unitPrice);
     if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd)) throw new Error("Whop could not reprice the requested lead item.");
@@ -141,8 +151,11 @@ async function resolveCardFeePlan(whop: WhopClient, plans: ProductPlan[], accoun
 }
 
 async function repriceLeadPlan(whop: WhopClient, plan: Whop.Plan | Whop.PlanListItem, price: number) {
+  const mode = plan.metadata?.payment_mode === "card" ? "card" : "bank";
+  const state = typeof plan.metadata?.state === "string" ? plan.metadata.state : "";
   return whop.plans.update({
-    id: plan.id, initial_price: price,
+    id: plan.id, initial_price: price, title: leadPlanTitle(state, mode),
+    payment_method_configuration: paymentConfigurationFor(mode),
     metadata: { ...plan.metadata, price_per_lead: String(price) },
   });
 }
@@ -162,7 +175,9 @@ export async function syncLeadPlanPrices(whop: WhopClient, accountId: string, pr
     const price = typeof m?.state === "string" ? wanted.get(m.state) : undefined;
     if (price === undefined || plan.account?.id !== accountId || plan.product?.id !== productId ||
       m?.pricing_model !== LEAD_PRICING_MODEL || m?.item_role !== "leads") continue;
-    if (Math.round(plan.initial_price * 100) === Math.round(price * 100) && m.price_per_lead === String(price)) continue;
+    const mode = m.payment_mode === "card" ? "card" : "bank";
+    if (Math.round(plan.initial_price * 100) === Math.round(price * 100) && m.price_per_lead === String(price) &&
+      hasMethods(plan.payment_method_configuration, paymentConfigurationFor(mode)) && plan.title === leadPlanTitle(m.state as string, mode)) continue;
     await repriceLeadPlan(whop, plan, price);
     repriced++;
   }

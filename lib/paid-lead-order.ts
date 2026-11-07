@@ -99,6 +99,6 @@ export function slackOrderMessage(order: PaidLeadOrder) {
   const states = order.items.length === 1
     ? `State: ${order.items[0].stateName} (${order.items[0].state})\nLeads: ${order.items[0].quantity}`
     : `States:\n${order.items.map((item) => `• ${item.stateName} (${item.state}): ${item.quantity} ${item.quantity === 1 ? "lead" : "leads"}`).join("\n")}\nTotal leads: ${order.quantity}`;
-  return { text: `Paid LOUDR lead order\n${states}\nOrder total (USD): $${order.orderTotalUsd.toFixed(2)}\nCheckout: ${order.paymentMode === "card" ? "Card" : "Wire & ACH"}\nPayment ID: ${order.paymentId}`,
+  return { text: `Paid LOUDR lead order\n${states}\nOrder total (USD): $${order.orderTotalUsd.toFixed(2)}\nCheckout: ${order.paymentMode === "card" ? "Card" : "Wire"}\nPayment ID: ${order.paymentId}`,
     unfurl_links: false, unfurl_media: false };
 }
