@@ -163,6 +163,29 @@ h1 { margin: 0; font-size: clamp(44px, 4.7vw, 66px); font-weight: 500; line-heig
 .return-panel .primary-button { margin-top: 28px; }
 .return-fineprint { color: #aaaaaa; font-size: 10px; line-height: 1.7; margin: 18px 0 0; }
 
+/* Multi-state order */
+.cart-block { margin-top: 26px; }
+.cart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 10px; color: var(--secondary); font-size: 12px; }
+.cart-heading span { color: #aaaaaa; font-size: 11px; }
+.cart-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 248px; overflow-y: auto; }
+.cart-line { display: flex; align-items: stretch; border: 1px solid #383838; border-radius: 7px; background: #171717; transition: border-color .15s, background .15s; }
+.cart-line:hover { border-color: #5a5a5a; }
+.cart-line.active { border-color: var(--accent); background: #1c1a10; }
+.cart-line.incomplete { border-style: dashed; }
+.cart-line-main { flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: none; border: 0; color: #fff; text-align: left; font-size: 12px; cursor: pointer; border-radius: 7px 0 0 7px; }
+.cart-line-main:focus-visible, .cart-line-remove:focus-visible, .add-state-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cart-line-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cart-line-state span { color: var(--muted); font-size: 10px; margin-left: 4px; }
+.cart-line-meta { flex-shrink: 0; color: var(--secondary); font-size: 11px; }
+.cart-line.active .cart-line-meta { color: var(--accent); }
+.cart-line.incomplete .cart-line-meta { color: #ffa1af; }
+.cart-line-remove { flex: 0 0 38px; display: grid; place-items: center; background: none; border: 0; border-left: 1px solid #2c2c2c; color: var(--muted); cursor: pointer; border-radius: 0 7px 7px 0; }
+.cart-line-remove:hover:not(:disabled) { color: #fff; background: #242424; }
+.add-state-button { display: inline-flex; align-items: center; gap: 8px; width: 100%; justify-content: center; min-height: 42px; margin-top: 18px; padding: 10px 14px; border: 1px dashed #4a4430; border-radius: 7px; background: transparent; color: var(--accent); font-size: 12px; font-weight: 500; cursor: pointer; transition: background .15s, border-color .15s; }
+.add-state-button:hover:not(:disabled) { background: #18160d; border-color: var(--accent); }
+.add-state-button:disabled { color: var(--muted); border-color: #333; cursor: not-allowed; }
+.quote-summary > .cart-subtotal { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); color: #fff; }
+.payment-summary > div + div { margin-top: 8px; }
 @media (min-width: 1500px) { .main-grid { padding-top: 100px; padding-bottom: 110px; } }
 @media (max-width: 1100px) {
   .site-shell { padding: 32px 36px 24px; }

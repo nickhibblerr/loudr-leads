@@ -5,12 +5,13 @@ const { loadTypeScript } = require('./load-ts.cjs');
 const pricing = loadTypeScript('lib/top-up.ts');
 const preferences = loadTypeScript('lib/payment-methods.ts');
 const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
+const cartLib=loadTypeScript('lib/lead-cart.ts',{'@/lib/lead-pricing':leads,'@/lib/payment-methods':preferences});
 const planHelpers = loadTypeScript('lib/whop-plans.ts', {
   '@/lib/top-up': pricing,
-  '@/lib/lead-pricing': leads,
+  '@/lib/lead-pricing': leads, '@/lib/lead-cart': cartLib,
   '@/lib/payment-methods': preferences,
 });
-const checkoutHelpers = loadTypeScript('lib/lead-checkout.ts', { '@/lib/payment-methods': preferences });
+const checkoutHelpers = loadTypeScript('lib/lead-checkout.ts', { '@/lib/payment-methods': preferences, '@/lib/lead-cart': cartLib });
 const env = {
   WHOP_API_KEY: 'test-key', WHOP_ACCOUNT_ID: 'biz_test',
   WHOP_LEADS_PRODUCT_ID: 'prod_test', NEXT_PUBLIC_SITE_URL: 'https://example.com',
@@ -51,7 +52,7 @@ function harness() {
     payments: { create: async (input) => { calls.payments.push(input); return { id: 'pay_test', status: 'pending' }; } },
   };
   const dependencies = {
-    '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences,
+    '@/lib/lead-pricing': leads, '@/lib/lead-cart': cartLib, '@/lib/payment-methods': preferences,
     '@/lib/whop-plans': planHelpers, '@/lib/lead-checkout': checkoutHelpers,
     '@/lib/pricing-store': {
       readRateCard: async () => {
@@ -264,4 +265,26 @@ test('zero rounded surcharge still separates plans and both modes retain identit
   assert.equal(h.calls.payments.length, 4);
   assert.equal((await h.pay(paymentRequest(orders[0], { paymentMode: 'card', confirmationToken: 'ctok_card' }))).status, 400);
   assert.equal(h.calls.payments.length, 4);
+});
+
+test('checkout accepts a multi-state order and prices it from saved rates', async () => {
+  const h = harness();
+  h.setPrice('AL', 410);
+  const items = [{ state: 'TX', quantity: 10 }, { state: 'AL', quantity: 3 }];
+  const response = await h.checkout(request({ items, paymentMode: 'card', priceVersion: h.card.version, total: 1 }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.quote, undefined, 'the single-state quote is only returned for one-state orders');
+  assert.deepEqual(body.cart.lines.map((line) => [line.state, line.leadCount, line.unitPrice]), [['TX', 10, 500], ['AL', 3, 410]]);
+  assert.equal(body.cart.amountCents, 623000); assert.equal(body.cart.feeCents, 16821); assert.equal(body.cart.totalCents, 639821);
+  assert.equal(body.items.length, 3);
+  assert.deepEqual(body.items.map((item) => item.quantity), [10, 3, 1]);
+  assert.equal(body.items[2].plan, body.feePlanId);
+  for (const bad of [[{ state: 'TX', quantity: 1 }, { state: 'TX', quantity: 2 }], [{ state: 'CA', quantity: 1 }], [], [{ state: 'TX', quantity: 0 }]]) {
+    assert.equal((await h.checkout(request({ items: bad, priceVersion: h.card.version }))).status, 400);
+  }
+  assert.equal((await h.checkout(request({ items, state: 'TX' }))).status, 400);
+  const stale = await h.checkout(request({ items, priceVersion: 'saved-0' }));
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).rateCard.version, h.card.version);
 });

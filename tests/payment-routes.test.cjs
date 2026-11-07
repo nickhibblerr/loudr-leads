@@ -5,15 +5,16 @@ const pricing = loadTypeScript('lib/top-up.ts');
 const preferences = loadTypeScript('lib/payment-methods.ts');
 const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
 const plans = loadTypeScript('lib/whop-plans.ts', { '@/lib/payment-methods': preferences, '@/lib/top-up': pricing, '@/lib/lead-pricing': leads });
-const nativePlans = loadTypeScript('lib/lead-checkout.ts', { '@/lib/payment-methods': preferences });
+const cartLib=loadTypeScript('lib/lead-cart.ts',{'@/lib/lead-pricing':leads,'@/lib/payment-methods':preferences});
+const nativePlans = loadTypeScript('lib/lead-checkout.ts', { '@/lib/payment-methods': preferences, '@/lib/lead-cart': cartLib });
 const env = { WHOP_API_KEY: 'test-key', WHOP_ACCOUNT_ID: 'biz_test', WHOP_LEADS_PRODUCT_ID: 'prod_test', NEXT_PUBLIC_SITE_URL: 'https://example.com' };
 const pricingStore = { readRateCard: async () => ({ version: 'initial', updatedAt: null, states: leads.LEAD_STATES }) };
 const request = (body) => new Request('https://example.com/api/test', { method: 'POST', body: JSON.stringify(body) });
 function checkoutRoute() {
   const calls = [];
   const { POST } = loadTypeScript('app/api/checkout/route.ts', {
-    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences, '@/lib/pricing-store': pricingStore,
-    '@/lib/lead-checkout': { getLeadCheckout: async (_, account, product, quote, forceUsd) => { calls.push({ account, product, quote, forceUsd }); return { planId: 'plan_test', feePlanId: quote.feeCents ? 'plan_fee' : null, items: [{plan: 'plan_test', quantity: quote.leadCount}, ...(quote.feeCents ? [{plan: 'plan_fee', quantity: 1}] : [])] }; } },
+    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/lead-cart': cartLib, '@/lib/payment-methods': preferences, '@/lib/pricing-store': pricingStore,
+    '@/lib/lead-checkout': { getCartCheckout: async (_, account, product, cart, forceUsd) => { const quote = cartLib.lineQuote(cart, cart.lines[0]); calls.push({ account, product, cart, quote, forceUsd }); return { planId: 'plan_test', feePlanId: cart.feeCents ? 'plan_fee' : null, items: [...cart.lines.map((line, index) => ({plan: index ? `plan_${line.state}` : 'plan_test', quantity: line.leadCount})), ...(cart.feeCents ? [{plan: 'plan_fee', quantity: 1}] : [])] }; } },
     '@whop/sdk': { WhopClient: class {} }, 'next/cache': { unstable_cache: (fn) => fn },
   }, { process: { env } });
   return { POST, calls };
@@ -26,7 +27,7 @@ function payRoute(planChange = {}, paymentMode = 'bank', confirmationType = paym
   const client = { confirmationTokens: { retrieve: async () => ({ status: 'pending', payment_method_preview: { type: confirmationType } }) }, plans: { retrieve: async () => plan },
     payments: { create: async (input) => { charges.push(input); return { id: 'pay_test', status: 'pending' }; } } };
   const { POST } = loadTypeScript('app/api/pay/route.ts', {
-    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/payment-methods': preferences, '@/lib/whop-plans': plans, '@/lib/lead-checkout': { ...nativePlans, getLeadCheckout: async () => ({planId: 'plan_test', items: [{plan: 'plan_test', quantity: 2}, ...(paymentMode === 'card' ? [{plan: 'plan_fee', quantity: 1}] : [])]}) }, '@/lib/pricing-store': pricingStore,
+    '@/lib/top-up': pricing, '@/lib/lead-pricing': leads, '@/lib/lead-cart': cartLib, '@/lib/payment-methods': preferences, '@/lib/whop-plans': plans, '@/lib/lead-checkout': { ...nativePlans, getLeadCheckout: async () => ({planId: 'plan_test', items: [{plan: 'plan_test', quantity: 2}, ...(paymentMode === 'card' ? [{plan: 'plan_fee', quantity: 1}] : [])]}) }, '@/lib/pricing-store': pricingStore,
     '@whop/sdk': { WhopClient: class { constructor() { return client; } } },
   }, { process: { env } });
   return { POST, charges };

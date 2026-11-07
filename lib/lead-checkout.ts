@@ -1,6 +1,7 @@
 import type { Whop, WhopClient } from "@whop/sdk";
 import { effectiveForceUsd, paymentConfigurationFor } from "@/lib/payment-methods";
 import type { LeadQuote } from "@/lib/lead-pricing";
+import { calculateCartQuote, lineQuote, type CartQuote } from "@/lib/lead-cart";
 
 export const LEAD_PRICING_MODEL = "unit_quantity_v1";
 export type LeadCheckoutItem = { plan: string; quantity: number };
@@ -52,34 +53,90 @@ function leadPlanTitle(state: string, mode: LeadQuote["paymentMode"]) {
   return `${state} lead (${mode === "card" ? "Card" : "Wire & ACH"})`;
 }
 
-async function resolveItemPlan(whop: WhopClient, accountId: string, productId: string, quote: LeadQuote, forceUsd: boolean, role: ItemRole) {
-  const plans = await whop.plans.list({ account_id: accountId, product_ids: [productId], plan_types: ["one_time"], visibilities: ["quick_link"], first: 100 });
-  let samePlanOtherPrice: Whop.PlanListItem | null = null;
-  for await (const plan of plans) {
-    if (isLeadItemPlan(plan, accountId, productId, quote, forceUsd, role)) return plan;
-    if (role === "leads" && !samePlanOtherPrice && isLeadItemFamily(plan, accountId, productId, quote, forceUsd, role)) samePlanOtherPrice = plan;
-  }
+type ProductPlan = Whop.Plan | Whop.PlanListItem;
+
+async function listProductPlans(whop: WhopClient, accountId: string, productId: string): Promise<ProductPlan[]> {
+  const plans: ProductPlan[] = [];
+  const page = await whop.plans.list({ account_id: accountId, product_ids: [productId], plan_types: ["one_time"], visibilities: ["quick_link"], first: 100 });
+  for await (const plan of page) plans.push(plan);
+  return plans;
+}
+
+/** Finds the state's lead plan for this payment mode, repricing it in place if the admin changed the price. */
+async function resolveLeadPlan(whop: WhopClient, plans: ProductPlan[], accountId: string, productId: string, quote: LeadQuote, forceUsd: boolean) {
+  const exact = plans.find((plan) => isLeadItemPlan(plan, accountId, productId, quote, forceUsd));
+  if (exact) return exact;
+  const samePlanOtherPrice = plans.find((plan) => isLeadItemFamily(plan, accountId, productId, quote, forceUsd));
   if (samePlanOtherPrice) {
-    // The admin changed this state's price: reprice the existing plan instead of adding another.
     const plan = await repriceLeadPlan(whop, samePlanOtherPrice, quote.unitPrice);
-    if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd, role)) throw new Error("Whop could not reprice the requested lead item.");
+    if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd)) throw new Error("Whop could not reprice the requested lead item.");
+    plans.push(plan);
     return plan;
   }
-  const price = role === "leads" ? quote.unitPrice : quote.fee;
   const plan = await whop.plans.create({
-    account_id: accountId, product_id: productId, currency: "usd", initial_price: price,
+    account_id: accountId, product_id: productId, currency: "usd", initial_price: quote.unitPrice,
     plan_type: "one_time", visibility: "quick_link", unlimited_stock: true,
-    title: role === "leads" ? leadPlanTitle(quote.state, quote.paymentMode) : `${quote.state} card fee (2.7%)`,
-    sku: role === "leads" ? `LOUDR-LEADS-${quote.state}` : `LOUDR-CARD-FEE-${quote.state}`,
+    title: leadPlanTitle(quote.state, quote.paymentMode), sku: `LOUDR-LEADS-${quote.state}`,
     adaptive_pricing_enabled: !effectiveForceUsd(quote.paymentMode, forceUsd),
     payment_method_configuration: paymentConfigurationFor(quote.paymentMode),
-    metadata: leadItemMetadata(quote, forceUsd, role),
+    metadata: leadItemMetadata(quote, forceUsd),
   }, {
     // The API accepts this field; SDK 2.6 omits it from the generated plan type.
-    additionalBodyParameters: { allow_multiple_quantity: role === "leads" },
-    idempotencyKey: `loudr-unit-v1-${accountId}-${productId}-${quote.state}-${quote.unitPrice}-${quote.paymentMode}-${effectiveForceUsd(quote.paymentMode, forceUsd) ? "usd" : "adaptive"}-${role}${role === "card_fee" ? `-${quote.leadCount}-${quote.feeCents}` : ""}`,
+    additionalBodyParameters: { allow_multiple_quantity: true },
+    idempotencyKey: `loudr-unit-v1-${accountId}-${productId}-${quote.state}-${quote.unitPrice}-${quote.paymentMode}-${effectiveForceUsd(quote.paymentMode, forceUsd) ? "usd" : "adaptive"}-leads`,
   });
-  if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd, role)) throw new Error("Whop could not configure the requested lead item.");
+  if (!isLeadItemPlan(plan, accountId, productId, quote, forceUsd)) throw new Error("Whop could not configure the requested lead item.");
+  plans.push(plan);
+  return plan;
+}
+
+export function cardFeeMetadata(fee: number, feePercent: number, forceUsd: boolean) {
+  return { source: "loudr-leads-site", pricing_model: LEAD_PRICING_MODEL, item_role: "card_fee", fee_scope: "order",
+    payment_mode: "card", currency: "usd", pricing_mode: forceUsd ? "forced_usd" : "adaptive",
+    payment_fee_amount: String(fee), payment_fee_percent: String(feePercent) };
+}
+
+/**
+ * A card fee item. New orders use one fee item for the whole order (`fee_scope: order`);
+ * receipts from earlier single-state orders carry a state-specific fee item, which
+ * `allowStateFee` accepts. Price is checked only when `feeCents` is given.
+ */
+export function isCardFeePlan(plan: ProductPlan, accountId: string, productId: string, forceUsd: boolean, feeCents: number | null, allowStateFee = false) {
+  const m = plan.metadata;
+  const config = paymentConfigurationFor("card");
+  const actual = plan.payment_method_configuration;
+  return plan.account?.id === accountId && plan.product?.id === productId &&
+    plan.currency === "usd" && plan.plan_type === "one_time" && plan.visibility === "quick_link" &&
+    plan.adaptive_pricing_enabled === !forceUsd &&
+    m?.source === "loudr-leads-site" && m?.pricing_model === LEAD_PRICING_MODEL && m?.item_role === "card_fee" &&
+    m?.payment_mode === "card" && m?.pricing_mode === (forceUsd ? "forced_usd" : "adaptive") &&
+    (m?.fee_scope === "order" ? m?.state === undefined : allowStateFee && typeof m?.state === "string") &&
+    typeof m?.payment_fee_amount === "string" && /^\d+(?:\.\d{1,2})?$/.test(m.payment_fee_amount) &&
+    Math.round(Number(m.payment_fee_amount) * 100) === Math.round(plan.initial_price * 100) &&
+    (feeCents === null || Math.round(plan.initial_price * 100) === feeCents) &&
+    actual?.include_platform_defaults === false &&
+    ["enabled", "disabled"].every((key) => {
+      const values = actual?.[key];
+      const wanted = config[key as "enabled" | "disabled"];
+      return Array.isArray(values) && values.length === wanted.length && wanted.every((method) => values.includes(method));
+    });
+}
+
+async function resolveCardFeePlan(whop: WhopClient, plans: ProductPlan[], accountId: string, productId: string, cart: CartQuote, forceUsd: boolean) {
+  const existing = plans.find((plan) => isCardFeePlan(plan, accountId, productId, forceUsd, cart.feeCents));
+  if (existing) return existing;
+  const plan = await whop.plans.create({
+    account_id: accountId, product_id: productId, currency: "usd", initial_price: cart.fee,
+    plan_type: "one_time", visibility: "quick_link", unlimited_stock: true,
+    title: `Card fee (${cart.feePercent}%)`, sku: "LOUDR-CARD-FEE",
+    adaptive_pricing_enabled: !forceUsd, payment_method_configuration: paymentConfigurationFor("card"),
+    metadata: cardFeeMetadata(cart.fee, cart.feePercent, forceUsd),
+  }, {
+    additionalBodyParameters: { allow_multiple_quantity: false },
+    idempotencyKey: `loudr-order-fee-v1-${accountId}-${productId}-${cart.feeCents}-${forceUsd ? "usd" : "adaptive"}`,
+  });
+  if (!isCardFeePlan(plan, accountId, productId, forceUsd, cart.feeCents)) throw new Error("Whop could not configure the card fee.");
+  plans.push(plan);
   return plan;
 }
 
@@ -112,14 +169,29 @@ export async function syncLeadPlanPrices(whop: WhopClient, accountId: string, pr
   return repriced;
 }
 
-export async function getLeadCheckout(whop: WhopClient, accountId: string, productId: string, quote: LeadQuote, forceUsd = false) {
-  const leadPlan = await resolveItemPlan(whop, accountId, productId, quote, forceUsd, "leads");
-  const items: LeadCheckoutItem[] = [{ plan: leadPlan.id, quantity: quote.leadCount }];
-  let feePlanId: string | null = null;
-  if (quote.feeCents > 0) {
-    const feePlan = await resolveItemPlan(whop, accountId, productId, quote, forceUsd, "card_fee");
-    feePlanId = feePlan.id;
-    items.push({ plan: feePlan.id, quantity: 1 });
+/** One quantity line per state, plus a single card fee line covering the whole order. */
+export async function getCartCheckout(whop: WhopClient, accountId: string, productId: string, cart: CartQuote, forceUsd = false) {
+  const usd = effectiveForceUsd(cart.paymentMode, forceUsd);
+  const plans = await listProductPlans(whop, accountId, productId);
+  const items: LeadCheckoutItem[] = [];
+  const lines: { state: string; plan: string; quantity: number }[] = [];
+  for (const line of cart.lines) {
+    const plan = await resolveLeadPlan(whop, plans, accountId, productId, lineQuote(cart, line), usd);
+    items.push({ plan: plan.id, quantity: line.leadCount });
+    lines.push({ state: line.state, plan: plan.id, quantity: line.leadCount });
   }
-  return { planId: leadPlan.id, feePlanId, items };
+  let feePlanId: string | null = null;
+  if (cart.feeCents > 0) {
+    feePlanId = (await resolveCardFeePlan(whop, plans, accountId, productId, cart, usd)).id;
+    items.push({ plan: feePlanId, quantity: 1 });
+  }
+  return { planId: items[0].plan, feePlanId, items, lines };
+}
+
+/** Single-state checkout, kept for the guarded `/api/pay` route. */
+export async function getLeadCheckout(whop: WhopClient, accountId: string, productId: string, quote: LeadQuote, forceUsd = false) {
+  const cart = calculateCartQuote([{ state: quote.state, quantity: quote.leadCount }],
+    [{ code: quote.state, name: quote.stateName, price: quote.unitPrice }], quote.paymentMode);
+  const { planId, feePlanId, items } = await getCartCheckout(whop, accountId, productId, cart, forceUsd);
+  return { planId, feePlanId, items };
 }
