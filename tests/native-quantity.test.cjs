@@ -3,9 +3,10 @@ const assert=require('node:assert/strict');
 const {loadTypeScript:load}=require('./load-ts.cjs');
 const methods=load('lib/payment-methods.ts');
 const pricing=load('lib/lead-pricing.ts',{'@/lib/payment-methods':methods});
-const native=load('lib/lead-checkout.ts',{'@/lib/payment-methods':methods});
+const cartLib=load('lib/lead-cart.ts',{'@/lib/lead-pricing':pricing,'@/lib/payment-methods':methods});
+const native = load('lib/lead-checkout.ts', { '@/lib/payment-methods': methods, '@/lib/lead-cart': cartLib });
 const legacy=load('lib/whop-plans.ts',{'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/top-up':load('lib/top-up.ts')});
-const orders=load('lib/paid-lead-order.ts',{'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/lead-checkout':native,'@/lib/whop-plans':legacy});
+const orders=load('lib/paid-lead-order.ts',{'@/lib/lead-cart':cartLib,'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/lead-checkout':native,'@/lib/whop-plans':legacy});
 function harness(){
  const plans=[];const creates=[];
  return {plans,creates,client:{plans:{list:async()=>plans,create:async(input,options)=>{const plan={...input,...options.additionalBodyParameters,id:`plan_${plans.length+1}`,account:{id:'biz_test'},product:{id:'prod_test'}};plans.push(plan);creates.push(options);return plan;}}}};
@@ -29,7 +30,7 @@ test('native unit plans reuse across quantities; fees round once on the whole su
 });
 test('paid receipts determine actual lead quantity and ignore buyer metadata and card fee quantity',async()=>{
  const f=await fixture();const o=orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test');
- assert.equal(o.quantity,5);assert.equal(o.state,'AL');assert.equal(o.orderTotalUsd,1668.88);
+ assert.equal(o.quantity,5);assert.equal(o.items[0].state,'AL');assert.equal(o.orderTotalUsd,1668.88);
  assert.match(orders.slackOrderMessage(o).text,/Leads: 5/);
  const bank=await fixture('bank');assert.equal(bank.checkout.items.length,1);assert.equal(orders.paidLeadOrder(bank.payment,bank.plans,'biz_test','prod_test').quantity,5);
 });
@@ -89,5 +90,6 @@ test('orders paid before a price change still verify after the plan is repriced'
  }
  const f=await fixture('card');f.payment.currency='eur';for(const line of f.payment.line_items){line.subtotal.currency='eur';line.subtotal.amount='10.00';}
  const lead=f.plans.find(p=>p.metadata.item_role==='leads');lead.initial_price=999;lead.metadata={...lead.metadata,price_per_lead:'999'};
- assert.equal(orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test').orderTotalUsd,f.quote.total,'local-currency card orders use the per-order fee item price');
+ f.payment.usd_total={currency:'usd',amount:String(f.quote.total)};
+ assert.equal(orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test').orderTotalUsd,f.quote.total,'local-currency card orders report the USD value Whop recorded');
 });

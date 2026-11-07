@@ -77,7 +77,7 @@ export async function getTopUpPlan(
     initial_price: quote.total,
     adaptive_pricing_enabled: !forceUsd,
     plan_type: "one_time",
-    title: isLeadQuote(quote) ? `${quote.leadCount} ${quote.state} leads (${quote.paymentMode === "card" ? "Card" : "Wire & ACH"})` : "Ad spend top-up",
+    title: isLeadQuote(quote) ? `${quote.leadCount} ${quote.state} leads (${quote.paymentMode === "card" ? "Card" : "Wire"})` : "Ad spend top-up",
     visibility: "quick_link",
     unlimited_stock: true,
     payment_method_configuration: paymentConfiguration,

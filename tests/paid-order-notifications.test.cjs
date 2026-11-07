@@ -5,8 +5,9 @@ const methods=load('lib/payment-methods.ts');
 const pricing=load('lib/lead-pricing.ts',{'@/lib/payment-methods':methods});
 const topup=load('lib/top-up.ts');
 const plans=load('lib/whop-plans.ts',{'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/top-up':topup});
-const nativePlans=load('lib/lead-checkout.ts',{'@/lib/payment-methods':methods});
-const orderLib=load('lib/paid-lead-order.ts',{'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/whop-plans':plans,'@/lib/lead-checkout':nativePlans});
+const cartLib=load('lib/lead-cart.ts',{'@/lib/lead-pricing':pricing,'@/lib/payment-methods':methods});
+const nativePlans = load('lib/lead-checkout.ts', { '@/lib/payment-methods': methods, '@/lib/lead-cart': cartLib });
+const orderLib=load('lib/paid-lead-order.ts',{'@/lib/lead-cart':cartLib,'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/whop-plans':plans,'@/lib/lead-checkout':nativePlans});
 function fixture(){
  const quote=pricing.calculateLeadQuote('TX',5,[{code:'TX',name:'Texas',price:400}],'card');
  const plan={id:'plan_order',account:{id:'biz_test'},product:{id:'prod_test'},currency:'usd',plan_type:'one_time',visibility:'quick_link',initial_price:2054,adaptive_pricing_enabled:true,metadata:pricing.leadMetadata(quote),payment_method_configuration:methods.paymentConfigurationFor('card')};
@@ -15,7 +16,7 @@ function fixture(){
 }
 test('notification trusts historical merchant plan, not current rates or buyer metadata',()=>{
  const {plan,payment}=fixture();const order=orderLib.paidLeadOrder(payment,plan,'biz_test','prod_test');
- assert.equal(order.state,'TX');assert.equal(order.quantity,5);assert.equal(order.orderTotalUsd,2054);
+ assert.equal(order.items[0].state,'TX');assert.equal(order.quantity,5);assert.equal(order.orderTotalUsd,2054);
  const text=orderLib.slackOrderMessage(order).text;assert.match(text,/Texas \(TX\)/);assert.match(text,/Leads: 5/);assert.match(text,/pay_test/);assert(!text.includes('999'));
 });
 test('reject pending transfers, wrong merchant/product, and inconsistent plans',()=>{
