@@ -14,8 +14,20 @@ export function requestedPaymentMode(value: unknown): PaymentMode {
   throw new Error("Choose Wire or Card as your payment option.");
 }
 
-// Wires settle in USD; local-currency conversion would hide the wire method.
-export function effectiveForceUsd(mode: PaymentMode, requested = false): boolean {
+/**
+ * Every checkout is priced and charged in USD for every buyer: Whop adaptive pricing
+ * (local-currency display) is never enabled, whatever the payment method or request.
+ */
+export function effectiveForceUsd(_mode: PaymentMode, _requested = false): boolean {
+  return true;
+}
+
+/**
+ * Whether a plan or receipt was sold in USD, under the rule used when it was created:
+ * Wire was always USD, and card was USD only when the buyer chose it. Use this to verify
+ * existing plans and receipts, never to decide how a new checkout is priced.
+ */
+export function recordedForceUsd(mode: PaymentMode, requested = false): boolean {
   return mode === "bank" || requested;
 }
 

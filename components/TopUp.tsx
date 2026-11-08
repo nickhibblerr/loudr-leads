@@ -80,7 +80,8 @@ export default function TopUp() {
   const stateRef = useRef<HTMLSelectElement>(null);
   const currency = "usd" as const;
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("bank");
-  const [forceUsd, setForceUsd] = useState(false);
+  // Every checkout is in USD; adaptive (local-currency) pricing is never offered.
+  const forceUsd = true;
   const [checkoutLoading, setCheckoutLoading] = useState(true);
   const [completed, setCompleted] = useState(false);
   const [elementError, setElementError] = useState<string | null>(null);
@@ -289,12 +290,11 @@ export default function TopUp() {
         }
       }
       if (configured) {
-        setPlanId(await preparePlan(nextQuote, nextMode === "bank"));
+        setPlanId(await preparePlan(nextQuote, true));
         setElementError(null);
         setCheckoutLoading(true);
         setCompleted(false);
       }
-      setForceUsd(nextMode === "bank");
       setOrderId(`leads_${Date.now().toString(36)}`);
       setStep("payment");
     } catch (error) {
@@ -309,30 +309,11 @@ export default function TopUp() {
     if (preparing || completed) return;
     setPlanId(null);
     setPaymentMode("bank");
-    setForceUsd(false);
     setCheckoutError(null);
     setStep("amount");
     requestAnimationFrame(() => inputRef.current?.focus());
   }
 
-  async function makeUsd() {
-    if (!quote || forceUsd || preparingRef.current || completed) return;
-    preparingRef.current = true;
-    setPreparing(true);
-    setCheckoutError(null);
-    try {
-      const usdPlan = await preparePlan(quote, true);
-      setPlanId(usdPlan);
-      setForceUsd(true);
-      setElementError(null);
-      setCheckoutLoading(true);
-    } catch (error) {
-      setCheckoutError(errorMessage(error));
-    } finally {
-      preparingRef.current = false;
-      setPreparing(false);
-    }
-  }
 
   const leadsLabel = (count: number) => `${count.toLocaleString("en-US")} ${count === 1 ? "lead" : "leads"}`;
 
@@ -446,7 +427,7 @@ export default function TopUp() {
                     <button className="text-button" type="button" onClick={() => { loadError.retry(); setLoadError(null); }}>Reload payment form</button>
                   </div>
                 )}
-                <p className="currency-note">{paymentMode === "bank" ? "Wire payments are charged in USD." : forceUsd ? "Payment currency is USD." : "Your card checkout and local-currency total appear below."}</p>
+                <p className="currency-note">All payments are charged in US dollars (USD).</p>
                 {elementError && <div className="payment-load-error" role="alert">
                   <p className="form-error">{elementError}</p>
                   <button className="text-button" type="button" onClick={() => { setElementError(null); setCheckoutLoading(true); setCheckoutVersion((version) => version + 1); }}>Reload checkout</button>
@@ -461,12 +442,6 @@ export default function TopUp() {
                     onError={(event) => { setElementError(event.message || "Unable to load checkout. Please try again."); setCheckoutLoading(false); }} />
                 </Checkout>
                 {checkoutError && <p className="form-error" role="alert">{checkoutError}</p>}
-                {paymentMode === "card" && <div className="usd-override">
-                  {forceUsd ? <p role="status">Paying in US dollars.</p> : <>
-                    <p>Prefer to pay in US dollars?</p>
-                    <button className="text-button" type="button" onClick={makeUsd} disabled={preparing || checkoutLoading || completed}>{preparing ? "Switching to USD…" : "Make USD"}</button>
-                  </>}
-                </div>}
               </>
             ) : (
               <div className="configuration-notice" role="status">

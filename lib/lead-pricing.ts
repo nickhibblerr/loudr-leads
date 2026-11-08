@@ -1,5 +1,5 @@
 import { type TopUpQuote } from "@/lib/top-up";
-import { CARD_FEE_BASIS_POINTS, effectiveForceUsd, requestedPaymentMode, type PaymentMode } from "@/lib/payment-methods";
+import { CARD_FEE_BASIS_POINTS, recordedForceUsd, requestedPaymentMode, type PaymentMode } from "@/lib/payment-methods";
 
 export const MAX_LEAD_QUANTITY = 1000;
 /** Smallest order per state. Checked when an order is placed, not when an old receipt is verified. */
@@ -101,7 +101,7 @@ export function leadQuoteKey(quote: LeadQuote): string {
 
 export function leadMetadata(quote: LeadQuote, forceUsd = false) {
   return { source: "loudr-leads-site", currency: quote.currency,
-    pricing_mode: effectiveForceUsd(quote.paymentMode, forceUsd) ? "forced_usd" : "adaptive", state: quote.state, state_name: quote.stateName,
+    pricing_mode: recordedForceUsd(quote.paymentMode, forceUsd) ? "forced_usd" : "adaptive", state: quote.state, state_name: quote.stateName,
     quantity: String(quote.leadCount), price_per_lead: String(quote.unitPrice), total_amount: String(quote.total),
     payment_mode: quote.paymentMode, subtotal_amount: String(quote.amount),
     payment_fee_percent: String(quote.feePercent), payment_fee_amount: String(quote.fee) };

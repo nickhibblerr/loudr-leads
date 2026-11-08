@@ -136,10 +136,11 @@ test('both endpoints reject malformed payment modes without a plan or charge', a
   }
 });
 
-test('card checkout and charge use the server surcharge despite client fee or total tampering', async () => {
-  for (const forceUsd of [false, true]) {
+test('card checkout and charge use the server surcharge despite client fee or total tampering, always in USD', async () => {
+  for (const requestedUsd of [false, true]) {
+    const forceUsd = true; // A buyer can't opt into local-currency pricing.
     const checkout = checkoutRoute();
-    const response = await checkout.POST(request({ state: 'TX', quantity: 2, paymentMode: 'card', forceUsd, fee: 0, feePercent: 0, feeCents: 0, total: 1 }));
+    const response = await checkout.POST(request({ state: 'TX', quantity: 2, paymentMode: 'card', forceUsd: requestedUsd, fee: 0, feePercent: 0, feeCents: 0, total: 1 }));
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.quote.paymentMode, 'card');
@@ -149,7 +150,7 @@ test('card checkout and charge use the server surcharge despite client fee or to
     assert.equal(checkout.calls[0].forceUsd, forceUsd);
     const quote = leads.calculateLeadQuote('TX', 2, undefined, 'card');
     const pay = payRoute({ adaptive_pricing_enabled: !forceUsd, metadata: nativePlans.leadItemMetadata(quote, forceUsd) }, 'card');
-    const paid = await pay.POST(request({ ...validPayment, paymentMode: 'card', forceUsd, fee: 0, feePercent: 0, total: 1 }));
+    const paid = await pay.POST(request({ ...validPayment, paymentMode: 'card', forceUsd: requestedUsd, fee: 0, feePercent: 0, total: 1 }));
     assert.equal(paid.status, 200);
     assert.equal(pay.charges.length, 1);
     assert.equal(pay.charges[0].metadata.payment_mode, 'card');

@@ -248,7 +248,7 @@ test('card and bank cached plans remain distinct and preserve current saved rate
   assert.equal((await h.pay(paymentRequest(card))).status, 409);
 });
 
-test('zero rounded surcharge still separates plans and both modes retain identity under Make USD', async () => {
+test('zero rounded surcharge still separates plans; every checkout is USD whatever is requested', async () => {
   const h = harness();
   h.setPrice('TX', 0.01);
   const orders = [];
@@ -258,12 +258,13 @@ test('zero rounded surcharge still separates plans and both modes retain identit
       orders.push(order);
       assert.equal(order.quote.totalCents, 1);
       assert.equal(order.quote.paymentMode, paymentMode);
-      assert.equal(order.forceUsd, paymentMode === 'bank' || forceUsd);
+      assert.equal(order.forceUsd, true, 'adaptive pricing is never enabled');
       assert.equal((await h.pay(paymentRequest(order))).status, 200);
     }
   }
-  assert.equal(new Set(orders.map((order) => order.planId)).size, 3);
-  assert.equal(new Set(h.calls.creates.map(({ options }) => options.idempotencyKey)).size, 3);
+  assert.equal(new Set(orders.map((order) => order.planId)).size, 2, 'one USD plan per payment method');
+  assert(h.savedPlans.every((plan) => plan.adaptive_pricing_enabled === false));
+  assert.equal(new Set(h.calls.creates.map(({ options }) => options.idempotencyKey)).size, 2);
   assert.equal(h.calls.payments.length, 4);
   assert.equal((await h.pay(paymentRequest(orders[0], { paymentMode: 'card', confirmationToken: 'ctok_card' }))).status, 400);
   assert.equal(h.calls.payments.length, 4);

@@ -149,11 +149,12 @@ test('lead checkout creates and repairs only the selected payment-method configu
     }
     assert.equal(created.initial_price, mode === 'card' ? 1030 : 1000);
     assert.equal(created.metadata.payment_mode, mode);
-    const good = planFor(quote, { metadata: leads.leadMetadata(quote), payment_method_configuration: config });
-    assert.equal(isTopUpPlanForAmount(good, 'biz_test', 'prod_test', quote), true);
+    assert.equal(created.adaptive_pricing_enabled, false, 'every plan is USD-only');
+    const good = planFor(quote, { adaptive_pricing_enabled: false, metadata: leads.leadMetadata(quote, true), payment_method_configuration: config });
+    assert.equal(isTopUpPlanForAmount(good, 'biz_test', 'prod_test', quote, true), true);
     for (const unsafe of [null, { ...config, include_platform_defaults: true }, { ...config, enabled: [...config.enabled, mode === 'card' ? 'bank_wire' : 'card'] }]) {
       const broken = { ...good, payment_method_configuration: unsafe };
-      assert.equal(isTopUpPlanForAmount(broken, 'biz_test', 'prod_test', quote), false);
+      assert.equal(isTopUpPlanForAmount(broken, 'biz_test', 'prod_test', quote, true), false);
       const repair = mockClient([broken]);
       await getTopUpPlan(repair, 'biz_test', 'prod_test', quote);
       assert.equal(repair.calls[1][0], 'update');

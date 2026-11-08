@@ -1,5 +1,5 @@
 import type { Whop, WhopClient } from "@whop/sdk";
-import { effectiveForceUsd, paymentConfigurationFor } from "@/lib/payment-methods";
+import { effectiveForceUsd, paymentConfigurationFor, recordedForceUsd } from "@/lib/payment-methods";
 import type { LeadQuote } from "@/lib/lead-pricing";
 import { calculateCartQuote, lineQuote, type CartQuote } from "@/lib/lead-cart";
 
@@ -13,7 +13,8 @@ export function leadItemMetadata(quote: LeadQuote, forceUsd = false, role: ItemR
     source: "loudr-leads-site", pricing_model: LEAD_PRICING_MODEL, item_role: role,
     state: quote.state, state_name: quote.stateName, price_per_lead: String(quote.unitPrice),
     payment_mode: quote.paymentMode, currency: quote.currency,
-    pricing_mode: effectiveForceUsd(quote.paymentMode, forceUsd) ? "forced_usd" : "adaptive",
+    // New checkouts always pass forceUsd = true; earlier plans are matched as they were sold.
+    pricing_mode: recordedForceUsd(quote.paymentMode, forceUsd) ? "forced_usd" : "adaptive",
     ...(role === "card_fee" ? { order_quantity: String(quote.leadCount), payment_fee_amount: String(quote.fee), payment_fee_percent: String(quote.feePercent) } : {}),
   };
 }
@@ -27,7 +28,7 @@ function isLeadItemFamily(plan: Whop.Plan | Whop.PlanListItem, accountId: string
   const actual = plan.payment_method_configuration;
   return plan.account?.id === accountId && plan.product?.id === productId &&
     plan.currency === "usd" && plan.plan_type === "one_time" && plan.visibility === "quick_link" &&
-    plan.adaptive_pricing_enabled === !effectiveForceUsd(quote.paymentMode, forceUsd) &&
+    plan.adaptive_pricing_enabled === !recordedForceUsd(quote.paymentMode, forceUsd) &&
     (role !== "leads" || (plan as QuantityPlan).allow_multiple_quantity === true) &&
     Object.entries(expected).every(([key, value]) => plan.metadata?.[key] === value) &&
     (anyMethods || hasMethods(actual, config));

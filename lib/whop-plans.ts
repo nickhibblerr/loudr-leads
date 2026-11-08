@@ -1,5 +1,5 @@
 import type { Whop, WhopClient } from "@whop/sdk";
-import { effectiveForceUsd, paymentConfigurationFor, type PaymentMode } from "@/lib/payment-methods";
+import { effectiveForceUsd, paymentConfigurationFor, recordedForceUsd, type PaymentMode } from "@/lib/payment-methods";
 import { topUpMetadata, topUpQuoteKey, type TopUpQuote } from "@/lib/top-up";
 import { isLeadQuote, leadMetadata, leadQuoteKey, type LeadQuote } from "@/lib/lead-pricing";
 
@@ -16,7 +16,8 @@ function matchesMetadata(plan: Pick<Whop.Plan, "metadata">, quote: TopUpQuote | 
 }
 
 export function isTopUpPlanForAmount(plan: Whop.Plan, accountId: string, productId: string, quote: TopUpQuote | LeadQuote, forceUsd = false) {
-  if (isLeadQuote(quote)) forceUsd = effectiveForceUsd(quote.paymentMode, forceUsd);
+  // Verification compares the pricing mode the plan was sold with, including older adaptive plans.
+  if (isLeadQuote(quote)) forceUsd = recordedForceUsd(quote.paymentMode, forceUsd);
   return plan.account?.id === accountId &&
     plan.product?.id === productId &&
     plan.currency === quote.currency &&
