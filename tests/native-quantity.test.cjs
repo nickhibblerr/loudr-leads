@@ -41,8 +41,14 @@ test('receipt validation rejects altered/missing items, quantities, amounts, sta
  }
  const plans=JSON.parse(JSON.stringify(f.plans));plans[0].metadata.state='TX';assert.throws(()=>orders.paidLeadOrder(f.payment,plans,'biz_test','prod_test'));
 });
-test('adaptive receipt currency is accepted only for adaptive card plans',async()=>{
- const f=await fixture();f.payment.currency='eur';for(const line of f.payment.line_items){line.subtotal.currency='eur';line.subtotal.amount='10.00';}
+// Earlier card plans used Whop adaptive pricing; new checkouts never do.
+function asAdaptive(f){for(const p of f.plans){p.adaptive_pricing_enabled=true;p.metadata={...p.metadata,pricing_mode:'adaptive'};}return f;}
+test('new card plans are USD-only; local-currency receipts verify only for earlier adaptive card plans',async()=>{
+ const f=await fixture();
+ assert(f.plans.every(p=>p.adaptive_pricing_enabled===false&&p.metadata.pricing_mode==='forced_usd'),'checkout never enables adaptive pricing');
+ f.payment.currency='eur';for(const line of f.payment.line_items){line.subtotal.currency='eur';line.subtotal.amount='10.00';}
+ assert.throws(()=>orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test'),'a USD-only plan cannot be paid in euros');
+ asAdaptive(f);
  assert.equal(orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test').quantity,5);
  f.payment.currency='gbp';assert.throws(()=>orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test'));
 });
@@ -88,7 +94,7 @@ test('orders paid before a price change still verify after the plan is repriced'
   const o=orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test');
   assert.equal(o.quantity,5);assert.equal(o.orderTotalUsd,f.quote.total);
  }
- const f=await fixture('card');f.payment.currency='eur';for(const line of f.payment.line_items){line.subtotal.currency='eur';line.subtotal.amount='10.00';}
+ const f=asAdaptive(await fixture('card'));f.payment.currency='eur';for(const line of f.payment.line_items){line.subtotal.currency='eur';line.subtotal.amount='10.00';}
  const lead=f.plans.find(p=>p.metadata.item_role==='leads');lead.initial_price=999;lead.metadata={...lead.metadata,price_per_lead:'999'};
  f.payment.usd_total={currency:'usd',amount:String(f.quote.total)};
  assert.equal(orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test').orderTotalUsd,f.quote.total,'local-currency card orders report the USD value Whop recorded');
