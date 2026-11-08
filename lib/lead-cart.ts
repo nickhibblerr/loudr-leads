@@ -12,8 +12,8 @@ export type CartQuote = {
 };
 export type CartItemInput = { state: unknown; quantity: unknown };
 
-/** Prices every state separately; the card fee is 2.7% of the whole cart, rounded once. */
-export function calculateCartQuote(items: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank"): CartQuote {
+/** Prices every state separately; the card fee is a percentage of the whole cart, rounded once. */
+export function calculateCartQuote(items: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank", cardFeeBasisPoints: number = CARD_FEE_BASIS_POINTS): CartQuote {
   const mode = requestedPaymentMode(paymentMode);
   if (!Array.isArray(items) || items.length === 0) throw new Error("Add at least one state to your order.");
   if (items.length > MAX_CART_STATES) throw new Error(`An order can include up to ${MAX_CART_STATES} states.`);
@@ -28,7 +28,7 @@ export function calculateCartQuote(items: unknown, rates: readonly LeadRate[] = 
       amountCents: quote.amountCents, amount: quote.amount };
   });
   const amountCents = lines.reduce((sum, line) => sum + line.amountCents, 0);
-  const feeBasisPoints = mode === "card" ? CARD_FEE_BASIS_POINTS : 0;
+  const feeBasisPoints = mode === "card" ? cardFeeBasisPoints : 0;
   const feeCents = Math.round(amountCents * feeBasisPoints / 10_000);
   const totalCents = amountCents + feeCents;
   return { paymentMode: mode, currency: "usd", lines, leadCount: lines.reduce((sum, line) => sum + line.leadCount, 0),

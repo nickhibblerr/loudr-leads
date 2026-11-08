@@ -10,7 +10,7 @@ const nativePlans = load('lib/lead-checkout.ts', { '@/lib/payment-methods': meth
 const orderLib=load('lib/paid-lead-order.ts',{'@/lib/lead-cart':cartLib,'@/lib/payment-methods':methods,'@/lib/lead-pricing':pricing,'@/lib/whop-plans':plans,'@/lib/lead-checkout':nativePlans});
 function fixture(){
  const quote=pricing.calculateLeadQuote('TX',5,[{code:'TX',name:'Texas',price:400}],'card');
- const plan={id:'plan_order',account:{id:'biz_test'},product:{id:'prod_test'},currency:'usd',plan_type:'one_time',visibility:'quick_link',initial_price:2054,adaptive_pricing_enabled:true,metadata:pricing.leadMetadata(quote),payment_method_configuration:methods.paymentConfigurationFor('card')};
+ const plan={id:'plan_order',account:{id:'biz_test'},product:{id:'prod_test'},currency:'usd',plan_type:'one_time',visibility:'quick_link',initial_price:2054,adaptive_pricing_enabled:true,metadata:{...pricing.leadMetadata(quote),payment_fee_percent:'2.7',payment_fee_amount:'54',total_amount:'2054'},payment_method_configuration:methods.paymentConfigurationFor('card')};
  const payment={id:'pay_test',status:'paid',paid_at:'2026-11-03T12:00:00Z',account_id:'biz_test',product_id:'prod_test',plan_id:plan.id,metadata:{state:'CA',quantity:'999'}};
  return {plan,payment};
 }

@@ -1,4 +1,4 @@
-export const LEAD_PRESETS = [1, 5, 10, 15, 25] as const;
+export const LEAD_PRESETS = [100, 125, 150, 200, 250] as const;
 
 export function isValidLeadCount(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 1;

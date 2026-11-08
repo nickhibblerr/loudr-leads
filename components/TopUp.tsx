@@ -12,7 +12,7 @@ import { clearSavedCart, readSavedCart, writeSavedCart } from "@/lib/saved-cart"
 import LeadSelector from "@/components/LeadSelector";
 import type { RateCard, RateState } from "@/lib/rate-card";
 import type { LeadCheckoutItem } from "@/lib/lead-checkout";
-import type { PaymentMode } from "@/lib/payment-methods";
+import { CARD_FEE_LABEL, type PaymentMode } from "@/lib/payment-methods";
 
 const appearance = {
   theme: { appearance: "dark" as const, accentColor: "yellow" as const, grayColor: "gray" as const },
@@ -385,14 +385,14 @@ export default function TopUp() {
                 </button>
               </div>
               <div className="payment-option payment-option-card">
-                <div className="payment-option-fee" id="card-fee" aria-live="polite"><span>Card fee (2.7%)</span><span>{cardQuote ? `+${formatAmount(cardQuote.fee, currency)}` : "—"}</span></div>
+                <div className="payment-option-fee" id="card-fee" aria-live="polite"><span>Card fee ({CARD_FEE_LABEL})</span><span>{cardQuote ? `+${formatAmount(cardQuote.fee, currency)}` : "—"}</span></div>
                 <div className="payment-option-total" id="card-total" aria-live="polite"><span>Card total</span><strong>{cardQuote ? formatAmount(cardQuote.total, currency) : "—"}</strong></div>
                 <button className="primary-button payment-option-button card-payment-button" type="submit" name="paymentMode" value="card" aria-describedby="card-fee card-total" disabled={preparing || !cardQuote || Boolean(pricingError)}>
                   <span>{preparing && paymentMode === "card" ? "Loading Card…" : "Continue to Payment (Card)"}</span><ArrowIcon />
                 </button>
               </div>
             </div>
-            <p className="panel-footnote">Totals shown in USD. Card payments include the 2.7% fee shown above.{multiple ? " Your order is saved on this device." : ""}</p>
+            <p className="panel-footnote">Totals shown in USD. Card payments include the {CARD_FEE_LABEL} card fee shown above.{multiple ? " Your order is saved on this device." : ""}</p>
           </form>
         ) : (
           <>
@@ -402,7 +402,7 @@ export default function TopUp() {
               {(quote?.lines ?? []).map((line) => (
                 <div key={line.state}><span>{line.stateName} · {leadsLabel(line.leadCount)}</span><span>{formatAmount(line.amount, currency)}</span></div>
               ))}
-              {paymentMode === "card" && <div className="fee-summary-row"><span>Card fee (2.7%)</span><span>{quote ? formatAmount(quote.fee, currency) : "—"}</span></div>}
+              {paymentMode === "card" && <div className="fee-summary-row"><span>Card fee ({CARD_FEE_LABEL})</span><span>{quote ? formatAmount(quote.fee, currency) : "—"}</span></div>}
               <div className="quote-total"><span>USD total{quote && quote.lines.length > 1 ? ` · ${leadsLabel(quote.leadCount)}` : ""}</span><strong>{quote ? formatAmount(quote.total, currency) : "—"}</strong></div>
               <button className="text-button" type="button" onClick={changeAmount} disabled={preparing || completed}>Change states, leads or payment method</button>
             </div>

@@ -3,6 +3,7 @@ import { calculateLeadQuote, LEAD_STATES } from "@/lib/lead-pricing";
 import { requestedPaymentMode } from "@/lib/payment-methods";
 import { isCardFeePlan, isPurchasedLeadPlan, LEAD_PRICING_MODEL } from "@/lib/lead-checkout";
 import { calculateCartQuote, MAX_CART_STATES } from "@/lib/lead-cart";
+import { ACCEPTED_CARD_FEE_BASIS_POINTS, CARD_FEE_BASIS_POINTS } from "@/lib/payment-methods";
 import { isTopUpPlanForAmount } from "@/lib/whop-plans";
 
 // Use merchant-created plan metadata and historical prices, never buyer metadata.
@@ -15,7 +16,11 @@ function legacyPaidLeadOrder(payment: Whop.Payment, plan: Whop.Plan, accountId: 
     typeof m.price_per_lead !== "string" || !/^\d+(?:\.\d{1,2})?$/.test(m.price_per_lead) ||
     (m.payment_mode !== "bank" && m.payment_mode !== "card") ||
     (m.pricing_mode !== "forced_usd" && m.pricing_mode !== "adaptive")) throw new Error("Invalid lead metadata.");
-  const quote = calculateLeadQuote(state.code, Number(m.quantity), [{ ...state, price: Number(m.price_per_lead) }], requestedPaymentMode(m.payment_mode));
+  // Whole-order plans record the card fee rate they were sold at (2.7% before the switch to 3%).
+  const percent = m.payment_fee_percent;
+  const recordedRate = typeof percent === "string" && /^\d+(?:\.\d{1,2})?$/.test(percent) ? Math.round(Number(percent) * 100) : CARD_FEE_BASIS_POINTS;
+  if (m.payment_mode === "card" && !(ACCEPTED_CARD_FEE_BASIS_POINTS as readonly number[]).includes(recordedRate)) throw new Error("Unexpected card fee rate.");
+  const quote = calculateLeadQuote(state.code, Number(m.quantity), [{ ...state, price: Number(m.price_per_lead) }], requestedPaymentMode(m.payment_mode), recordedRate);
   if (!isTopUpPlanForAmount(plan, accountId, productId, quote, m.pricing_mode === "forced_usd")) throw new Error("Plan does not match order.");
   return paidOrder(payment.id, [{ state: quote.state, stateName: quote.stateName, quantity: quote.leadCount }], quote.total, quote.paymentMode);
 }
@@ -75,8 +80,16 @@ export function paidLeadOrder(payment: Whop.Payment, purchasedPlans: Whop.Plan |
     if (!isPurchasedLeadPlan(plan, accountId, productId, quote, forceUsd)) throw new Error("Lead item does not match receipt.");
     return { state: state.code, name: state.name, quantity: line.quantity, price: unitPrice };
   });
+  // The fee rate comes from the order's own fee item, so orders paid before a rate change
+  // (2.7%) still verify after the switch to 3%.
+  let feeBasisPoints: number = CARD_FEE_BASIS_POINTS;
+  if (feePlan) {
+    const percent = feePlan.metadata?.payment_fee_percent;
+    feeBasisPoints = typeof percent === "string" && /^\d+(?:\.\d{1,2})?$/.test(percent) ? Math.round(Number(percent) * 100) : NaN;
+    if (!(ACCEPTED_CARD_FEE_BASIS_POINTS as readonly number[]).includes(feeBasisPoints)) throw new Error("Unexpected card fee rate.");
+  }
   const cart = calculateCartQuote(items.map((item) => ({ state: item.state, quantity: item.quantity })),
-    items.map((item) => ({ code: item.state, name: item.name, price: item.price })), mode);
+    items.map((item) => ({ code: item.state, name: item.name, price: item.price })), mode, feeBasisPoints);
 
   if ((cart.feeCents > 0) !== Boolean(feeLine)) throw new Error("Card fee item does not match order.");
   if (feeLine && feePlan) {

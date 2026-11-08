@@ -64,7 +64,7 @@ export function isValidLeadState(value: unknown): value is LeadState {
   return typeof value === "string" && LEAD_STATES.some((state) => state.code === value);
 }
 
-export function calculateLeadQuote(state: unknown, leadCount: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank"): LeadQuote {
+export function calculateLeadQuote(state: unknown, leadCount: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank", cardFeeBasisPoints: number = CARD_FEE_BASIS_POINTS): LeadQuote {
   const mode = requestedPaymentMode(paymentMode);
   const selection = rates.find((item) => item.code === state);
   if (!selection) throw new Error("Choose a valid state.");
@@ -76,7 +76,7 @@ export function calculateLeadQuote(state: unknown, leadCount: unknown, rates: re
   if (!Number.isFinite(selection.price) || selection.price <= 0 || selection.price > 10_000 ||
     Math.abs(selection.price * 100 - Math.round(selection.price * 100)) > 0.000001) throw new Error("Invalid state price.");
   const amountCents = Math.round(selection.price * 100) * leadCount;
-  const feeBasisPoints = mode === "card" ? CARD_FEE_BASIS_POINTS : 0;
+  const feeBasisPoints = mode === "card" ? cardFeeBasisPoints : 0;
   const feeCents = Math.round(amountCents * feeBasisPoints / 10_000);
   const totalCents = amountCents + feeCents;
   return { paymentMode: mode, currency: "usd", amountCents, totalCents, feeCents, feeBasisPoints,

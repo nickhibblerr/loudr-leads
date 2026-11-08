@@ -1,7 +1,12 @@
 import type { Whop } from "@whop/sdk";
 
 export type PaymentMode = "bank" | "card";
-export const CARD_FEE_BASIS_POINTS = 270;
+/** Card surcharge: 3% of the order subtotal. */
+export const CARD_FEE_BASIS_POINTS = 300;
+/** Display label for the card surcharge, e.g. "3%". */
+export const CARD_FEE_LABEL = `${CARD_FEE_BASIS_POINTS / 100}%`;
+/** Rates that orders were paid at, so receipts from before a rate change still verify. */
+export const ACCEPTED_CARD_FEE_BASIS_POINTS = [270, CARD_FEE_BASIS_POINTS] as const;
 
 export function requestedPaymentMode(value: unknown): PaymentMode {
   if (value === undefined) return "bank";
