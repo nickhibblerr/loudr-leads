@@ -1,44 +1,80 @@
 "use client";
 
 import type { Ref } from "react";
-import { isValidLeadCount, leadGuidance, LEAD_PRESETS } from "@/lib/leads";
+import { BUDGET_PRESETS, leadGuidance, LEAD_PRESETS, type OrderMode } from "@/lib/leads";
+import { leadsForBudget } from "@/lib/lead-cart";
+import { MAX_LEAD_QUANTITY, MIN_LEAD_QUANTITY } from "@/lib/lead-pricing";
+import { formatAmount } from "@/lib/top-up";
+import { CARD_FEE_LABEL } from "@/lib/payment-methods";
 
 type Props = {
+  mode: OrderMode;
+  onModeChange: (mode: OrderMode) => void;
   value: string;
   onChange: (value: string) => void;
   onBlur: () => void;
   error: string | null;
   disabled: boolean;
-  max: number;
+  /** Price per lead for the selected state, or null before a state is chosen. */
+  unitPrice: number | null;
   inputRef: Ref<HTMLInputElement>;
 };
 
-export default function LeadSelector({ value, onChange, onBlur, error, disabled, max, inputRef }: Props) {
-  const count = Number(value);
-  const valid = value.trim() !== "" && isValidLeadCount(count) && count <= max;
+const compactDollars = (amount: number) => amount >= 1000 && amount % 1000 === 0 ? `$${amount / 1000}k` : formatAmount(amount);
+
+export default function LeadSelector({ mode, onModeChange, value, onChange, onBlur, error, disabled, unitPrice, inputRef }: Props) {
+  const entered = Number(value);
+  const budget = mode === "budget" && value.trim() !== "" && unitPrice ? leadsForBudget(entered, unitPrice) : null;
+  const count = mode === "leads" ? entered : budget?.leadCount ?? 0;
+  const valid = !error && Number.isSafeInteger(count) && count >= MIN_LEAD_QUANTITY && count <= MAX_LEAD_QUANTITY;
   const guidance = valid ? leadGuidance(count) : null;
+  const presets = mode === "leads" ? LEAD_PRESETS : BUDGET_PRESETS;
+  const inputId = mode === "leads" ? "lead-count" : "lead-budget";
 
   return (
     <>
-        <label className="amount-label" htmlFor="lead-count">Number of leads <span>Choose your volume</span></label>
+        <div className="amount-label-row">
+          <label className="amount-label" htmlFor={inputId}>{mode === "leads" ? "Number of leads" : "Your lead budget"}</label>
+          <div className="mode-toggle" role="group" aria-label="Choose by">
+            {(["budget", "leads"] as const).map((option) => (
+              <button key={option} type="button" className={mode === option ? "selected" : undefined} aria-pressed={mode === option}
+                disabled={disabled} onClick={() => mode !== option && onModeChange(option)}>{option === "leads" ? "Leads" : "Budget"}</button>
+            ))}
+          </div>
+        </div>
         <div className={`amount-field${error ? " has-error" : ""}`}>
-          <input id="lead-count" name="leadCount" type="number" inputMode="numeric" min="1" max={max} step="1" ref={inputRef} disabled={disabled}
-            value={value} placeholder="0" autoComplete="off"
+          {mode === "budget" && <span className="amount-prefix" aria-hidden="true">$</span>}
+          <input key={inputId} id={inputId} name={mode === "leads" ? "leadCount" : "leadBudget"} type="number" inputMode="numeric" min="1" step="1"
+            ref={inputRef} disabled={disabled} value={value} placeholder="0" autoComplete="off"
             onChange={(event) => onChange(event.target.value)}
             onBlur={onBlur} aria-invalid={Boolean(error)}
-            aria-describedby={error ? "lead-error lead-hint" : "lead-hint"} />
-          <span className="lead-unit" aria-hidden="true">{count === 1 ? "lead" : "leads"}</span>
+            aria-describedby={[error ? "lead-error" : "", "lead-hint", budget ? "budget-result" : ""].filter(Boolean).join(" ")} />
+          {mode === "leads" && <span className="lead-unit" aria-hidden="true">{entered === 1 ? "lead" : "leads"}</span>}
         </div>
         <div className="amount-help">
-          <p id="lead-hint">Select a package or enter any custom quantity.</p>
+          {mode === "budget" && budget && valid && (
+            <p className="budget-result" id="budget-result">
+              = <strong>{count.toLocaleString("en-US")} leads</strong> · {formatAmount(budget.spentCents / 100)}
+              {budget.leftoverCents > 0 && <span className="budget-leftover"> ({formatAmount(budget.leftoverCents / 100)} left over)</span>}
+            </p>
+          )}
+          <p id="lead-hint">{mode === "leads"
+            ? `Select a package or enter any quantity — minimum ${MIN_LEAD_QUANTITY} leads.`
+            : `We’ll fit as many whole leads as your budget covers — minimum ${MIN_LEAD_QUANTITY}. Card payments add the ${CARD_FEE_LABEL} fee on top.`}</p>
           {error && <p className="form-error" id="lead-error" role="alert">{error}</p>}
         </div>
-        <div className="preset-grid" role="group" aria-label="Suggested lead quantities">
-          {LEAD_PRESETS.map((quantity) => (
-            <button key={quantity} type="button" className={`preset${count === quantity ? " selected" : ""}`}
-              aria-label={`${quantity} leads`} aria-pressed={count === quantity}
-              disabled={disabled} onClick={() => onChange(String(quantity))}>{quantity}</button>
-          ))}
+        <div className="preset-grid" role="group" aria-label={mode === "leads" ? "Suggested lead quantities" : "Suggested budgets"}>
+          {presets.map((preset) => {
+            const fit = mode === "budget" && unitPrice ? leadsForBudget(preset, unitPrice) : null;
+            const outOfRange = Boolean(fit && (fit.leadCount < MIN_LEAD_QUANTITY || fit.leadCount > MAX_LEAD_QUANTITY));
+            return (
+              <button key={preset} type="button" className={`preset${entered === preset ? " selected" : ""}`}
+                aria-label={mode === "leads" ? `${preset} leads` : `${formatAmount(preset)} budget${fit ? `, ${fit.leadCount} leads` : ""}`}
+                aria-pressed={entered === preset} disabled={disabled || outOfRange}
+                title={outOfRange && fit ? (fit.leadCount < MIN_LEAD_QUANTITY ? `Below the ${MIN_LEAD_QUANTITY}-lead minimum for this state` : "Above the 1,000-lead maximum") : undefined}
+                onClick={() => onChange(String(preset))}>{mode === "leads" ? preset : compactDollars(preset)}</button>
+            );
+          })}
         </div>
         <div role="status" aria-live="polite" aria-atomic="true">
           {guidance && <div className="lead-confidence" data-tone={guidance.tone}>

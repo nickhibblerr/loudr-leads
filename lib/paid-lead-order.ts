@@ -89,7 +89,7 @@ export function paidLeadOrder(payment: Whop.Payment, purchasedPlans: Whop.Plan |
     if (!(ACCEPTED_CARD_FEE_BASIS_POINTS as readonly number[]).includes(feeBasisPoints)) throw new Error("Unexpected card fee rate.");
   }
   const cart = calculateCartQuote(items.map((item) => ({ state: item.state, quantity: item.quantity })),
-    items.map((item) => ({ code: item.state, name: item.name, price: item.price })), mode, feeBasisPoints);
+    items.map((item) => ({ code: item.state, name: item.name, price: item.price })), mode, feeBasisPoints, 1);
 
   if ((cart.feeCents > 0) !== Boolean(feeLine)) throw new Error("Card fee item does not match order.");
   if (feeLine && feePlan) {

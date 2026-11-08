@@ -4,7 +4,9 @@ const { loadTypeScript } = require('./load-ts.cjs');
 
 const pricing = loadTypeScript('lib/top-up.ts');
 const preferences = loadTypeScript('lib/payment-methods.ts');
-const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
+const realLeads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
+// These route tests cover caching, pricing and tampering with small orders; the 50-lead minimum has its own tests.
+const leads = { ...realLeads, MIN_LEAD_QUANTITY: 1 };
 const cartLib=loadTypeScript('lib/lead-cart.ts',{'@/lib/lead-pricing':leads,'@/lib/payment-methods':preferences});
 const planHelpers = loadTypeScript('lib/whop-plans.ts', {
   '@/lib/top-up': pricing,
@@ -287,4 +289,18 @@ test('checkout accepts a multi-state order and prices it from saved rates', asyn
   const stale = await h.checkout(request({ items, priceVersion: 'saved-0' }));
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).rateCard.version, h.card.version);
+});
+
+test('checkout refuses any state below the 50-lead minimum', async () => {
+  const strict = { ...harness() };
+  const route = loadTypeScript('app/api/checkout/route.ts', {
+    '@/lib/lead-pricing': realLeads, '@/lib/lead-cart': loadTypeScript('lib/lead-cart.ts', { '@/lib/lead-pricing': realLeads, '@/lib/payment-methods': preferences }),
+    '@/lib/payment-methods': preferences, '@/lib/lead-checkout': { getCartCheckout: async () => { throw new Error('Whop must not be called'); } },
+    '@/lib/pricing-store': { readRateCard: async () => strict.card }, '@whop/sdk': { WhopClient: class {} },
+    'next/cache': { unstable_cache: (fn) => fn },
+  }, { process: { env: { WHOP_API_KEY: 'test', WHOP_ACCOUNT_ID: 'biz_test', WHOP_LEADS_PRODUCT_ID: 'prod_test' } } }).POST;
+  for (const body of [{ state: 'TX', quantity: 49 }, { items: [{ state: 'TX', quantity: 50 }, { state: 'AL', quantity: 20 }] }]) {
+    const response = await route(request(body));
+    assert.equal(response.status, 400, 'the exact message is checked in the cart tests');
+  }
 });

@@ -1,8 +1,12 @@
 import { MAX_CART_STATES } from "@/lib/lead-cart";
 import { isValidLeadState } from "@/lib/lead-pricing";
+import type { OrderMode } from "@/lib/leads";
 
-/** A buyer's in-progress order, kept only in their own browser for their next visit. */
-export type SavedCartLine = { state: string; quantity: string };
+/**
+ * A buyer's in-progress order, kept only in their own browser for their next visit.
+ * `value` is a lead count, or whole dollars of lead spend when `mode` is "budget".
+ */
+export type SavedCartLine = { state: string; value: string; mode: OrderMode };
 
 const KEY = "loudr-leads-cart-v1";
 
@@ -13,10 +17,13 @@ export function readSavedCart(): SavedCartLine[] {
     const seen = new Set<string>();
     return value.slice(0, MAX_CART_STATES).flatMap((item) => {
       if (typeof item !== "object" || item === null) return [];
-      const { state, quantity } = item as Record<string, unknown>;
+      // Orders saved before budgets existed stored `quantity` (a lead count).
+      const { state, quantity, value: saved, mode } = item as Record<string, unknown>;
       if (!isValidLeadState(state) || seen.has(state)) return [];
       seen.add(state);
-      return [{ state, quantity: typeof quantity === "string" && /^\d{0,6}$/.test(quantity) ? quantity : "" }];
+      const value = saved ?? quantity;
+      // Budget is the default; orders saved before budgets existed are lead counts.
+      return [{ state, mode: mode === "leads" || (mode === undefined && quantity !== undefined) ? "leads" : "budget", value: typeof value === "string" && /^\d{0,8}$/.test(value) ? value : "" }];
     });
   } catch {
     return [];

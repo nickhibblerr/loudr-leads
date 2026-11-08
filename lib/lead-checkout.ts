@@ -206,7 +206,7 @@ export async function getCartCheckout(whop: WhopClient, accountId: string, produ
 /** Single-state checkout, kept for the guarded `/api/pay` route. */
 export async function getLeadCheckout(whop: WhopClient, accountId: string, productId: string, quote: LeadQuote, forceUsd = false) {
   const cart = calculateCartQuote([{ state: quote.state, quantity: quote.leadCount }],
-    [{ code: quote.state, name: quote.stateName, price: quote.unitPrice }], quote.paymentMode);
+    [{ code: quote.state, name: quote.stateName, price: quote.unitPrice }], quote.paymentMode, undefined, 1);
   const { planId, feePlanId, items } = await getCartCheckout(whop, accountId, productId, cart, forceUsd);
   return { planId, feePlanId, items };
 }

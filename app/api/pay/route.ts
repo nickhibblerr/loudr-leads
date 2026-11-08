@@ -1,5 +1,5 @@
 import { WhopClient } from "@whop/sdk";
-import { calculateLeadQuote, leadMetadata, requestedLeadCount } from "@/lib/lead-pricing";
+import { calculateLeadQuote, leadMetadata, MIN_LEAD_QUANTITY, minimumOrderMessage, requestedLeadCount } from "@/lib/lead-pricing";
 import { isLeadItemPlan, getLeadCheckout } from "@/lib/lead-checkout";
 
 import { effectiveForceUsd, requestedPaymentMode, paymentMethodsFor } from "@/lib/payment-methods";
@@ -38,6 +38,7 @@ export async function POST(request: Request) {
   let quote;
   try {
     quote = calculateLeadQuote(state, requestedLeadCount(input), card.states, paymentMode);
+    if (quote.leadCount < MIN_LEAD_QUANTITY) throw new Error(minimumOrderMessage(quote.stateName));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Invalid lead order." }, { status: 400 });
   }
