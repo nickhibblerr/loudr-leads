@@ -3,6 +3,7 @@ import Link from "next/link";
 import Brand from "@/components/Brand";
 import { ArrowIcon } from "@/components/Icons";
 import ClearSavedCart from "./ClearSavedCart";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export const metadata: Metadata = { title: "Payment update | LOUDR Media" };
 
@@ -20,7 +21,7 @@ export default async function CheckoutReturn({ searchParams }: { searchParams: S
   return (
     <div className="site-shell return-shell">
       {!failed && <ClearSavedCart />}
-      <header className="site-header"><Brand /><span className="header-note">Payment update</span></header>
+      <header className="site-header"><Brand /><div className="site-header-actions"><span className="header-note">Payment update</span><ThemeToggle /></div></header>
       <main className="return-main">
         <section className="return-panel" aria-labelledby="return-heading">
           <div className="return-icon" aria-hidden="true">

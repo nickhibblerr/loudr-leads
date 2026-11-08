@@ -44,7 +44,7 @@ The payment business is Loudr Media (`biz_HqBscEcuZxTgaf`), using its dedicated 
 
 ### Ordering by leads or by budget
 
-Every state in an order has a **Budget | Leads** toggle above its amount input; **Budget is the default**. In Leads mode the buyer enters a lead count (quick picks 100–250). In Budget mode they enter whole dollars of lead spend (quick picks $10k–$100k); the site orders the most whole leads that budget covers and shows any amount left over, e.g. `= 61 leads · $19,825 ($175 left over)` for $20,000 of Alabama leads. The budget is lead spend only: card payments add the 3% fee on top. Quick budgets below the state's minimum are disabled. Switching modes converts the current value, and the saved order remembers each state's mode.
+Every state in an order has a **Budget | Leads** toggle above its amount input; **Budget is the default**. In Leads mode the buyer picks a package — **Starter (50), Optimal (100), Scale (200)** — or types any count. From 200 leads a callout says clients typically sign more cases and see better results at 200+ leads. In Budget mode they enter whole dollars of lead spend (quick picks $10k–$100k); the site orders the most whole leads that budget covers and shows any amount left over, e.g. `= 61 leads · $19,825 ($175 left over)` for $20,000 of Alabama leads. The budget is lead spend only: card payments add the 3% fee on top. Quick budgets below the state's minimum are disabled. Switching modes converts the current value, and the saved order remembers each state's mode.
 
 **Minimum order: 50 leads per state** (`MIN_LEAD_QUANTITY` in `lib/lead-pricing.ts`), in either mode. The form explains the minimum (in budget mode as a dollar amount for that state), and `/api/checkout` and `/api/pay` refuse any state below it. Receipts from earlier smaller orders still verify. Checkout always receives lead counts, so Whop plans, receipts and Slack are unchanged.
 
@@ -72,7 +72,7 @@ Unit tests validate pricing, unavailable states, quantity boundaries, card-fee r
 
 ## Branding
 
-Black, white and LOUDR yellow are used throughout. The header uses LOUDR's published logo with a text fallback if the image fails. Quick picks offer 100, 125, 150, 200 and 250 leads; any custom quantity up to 1,000 per state can be typed. Quantity guidance becomes more encouraging as the count grows.
+**Light mode is the default**; a toggle at the top right of every page switches to dark, and the choice is saved in the browser (`localStorage` key `loudr-theme`, applied before first paint by a small inline script). Colours are theme tokens in `app/globals.css`; the embedded Whop checkout follows the theme. In light mode the logo sits on a dark badge because its lettering is white. LOUDR yellow is the accent in both themes. The header uses LOUDR's published logo with a text fallback if the image fails. Lead packages are Starter (50), Optimal (100) and Scale (200); any quantity from 50 to 1,000 per state can be typed.
 
 ## State pricing admin
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { Ref } from "react";
-import { BUDGET_PRESETS, leadGuidance, LEAD_PRESETS, type OrderMode } from "@/lib/leads";
+import { BUDGET_PRESETS, leadGuidance, LEAD_TIERS, SCALE_THRESHOLD, type OrderMode } from "@/lib/leads";
 import { leadsForBudget } from "@/lib/lead-cart";
 import { MAX_LEAD_QUANTITY, MIN_LEAD_QUANTITY } from "@/lib/lead-pricing";
 import { formatAmount } from "@/lib/top-up";
@@ -28,7 +28,6 @@ export default function LeadSelector({ mode, onModeChange, value, onChange, onBl
   const count = mode === "leads" ? entered : budget?.leadCount ?? 0;
   const valid = !error && Number.isSafeInteger(count) && count >= MIN_LEAD_QUANTITY && count <= MAX_LEAD_QUANTITY;
   const guidance = valid ? leadGuidance(count) : null;
-  const presets = mode === "leads" ? LEAD_PRESETS : BUDGET_PRESETS;
   const inputId = mode === "leads" ? "lead-count" : "lead-budget";
 
   return (
@@ -59,30 +58,50 @@ export default function LeadSelector({ mode, onModeChange, value, onChange, onBl
             </p>
           )}
           <p id="lead-hint">{mode === "leads"
-            ? `Select a package or enter any quantity — minimum ${MIN_LEAD_QUANTITY} leads.`
+            ? `Pick a package or enter any quantity — minimum ${MIN_LEAD_QUANTITY} leads.`
             : `We’ll fit as many whole leads as your budget covers — minimum ${MIN_LEAD_QUANTITY}. Card payments add the ${CARD_FEE_LABEL} fee on top.`}</p>
           {error && <p className="form-error" id="lead-error" role="alert">{error}</p>}
         </div>
-        <div className="preset-grid" role="group" aria-label={mode === "leads" ? "Suggested lead quantities" : "Suggested budgets"}>
-          {presets.map((preset) => {
+        {mode === "leads" ? (
+          <div className="preset-grid tier-grid" role="group" aria-label="Lead packages">
+            {LEAD_TIERS.map((tier) => (
+              <button key={tier.count} type="button" className={`preset tier${entered === tier.count ? " selected" : ""}`}
+                aria-label={`${tier.name}: ${tier.count} leads, ${tier.note}`} aria-pressed={entered === tier.count}
+                disabled={disabled} onClick={() => onChange(String(tier.count))}>
+                <span className="tier-name">{tier.name}</span>
+                <span className="tier-count">{tier.count} leads</span>
+                <span className="tier-note">{tier.note}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+        <div className="preset-grid" role="group" aria-label="Suggested budgets">
+          {BUDGET_PRESETS.map((preset) => {
             const fit = mode === "budget" && unitPrice ? leadsForBudget(preset, unitPrice) : null;
             const outOfRange = Boolean(fit && (fit.leadCount < MIN_LEAD_QUANTITY || fit.leadCount > MAX_LEAD_QUANTITY));
             return (
               <button key={preset} type="button" className={`preset${entered === preset ? " selected" : ""}`}
-                aria-label={mode === "leads" ? `${preset} leads` : `${formatAmount(preset)} budget${fit ? `, ${fit.leadCount} leads` : ""}`}
+                aria-label={`${formatAmount(preset)} budget${fit ? `, ${fit.leadCount} leads` : ""}`}
                 aria-pressed={entered === preset} disabled={disabled || outOfRange}
                 title={outOfRange && fit ? (fit.leadCount < MIN_LEAD_QUANTITY ? `Below the ${MIN_LEAD_QUANTITY}-lead minimum for this state` : "Above the 1,000-lead maximum") : undefined}
-                onClick={() => onChange(String(preset))}>{mode === "leads" ? preset : compactDollars(preset)}</button>
+                onClick={() => onChange(String(preset))}>{compactDollars(preset)}</button>
             );
           })}
         </div>
+        )}
         <div role="status" aria-live="polite" aria-atomic="true">
-          {guidance && <div className="lead-confidence" data-tone={guidance.tone}>
+          {guidance && <div className={`lead-confidence${guidance.tier === "scale" ? " scale-callout" : ""}`} data-tone={guidance.tone}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
               <path d="M12 11v6m0-10v1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>
             <div><h3>{guidance.title}</h3><p>{guidance.description}</p></div>
+            {/* Illustrative only: shows where this order sits against the 200+ level. */}
+            <div className="tier-meter" aria-hidden="true">
+              {LEAD_TIERS.map((tier) => (
+                <span key={tier.count} className={count >= tier.count ? "reached" : undefined} style={{ height: `${10 + (tier.count / SCALE_THRESHOLD) * 18}px` }} />
+              ))}
+            </div>
           </div>}
         </div>
         {guidance && <p className="panel-footnote">More leads create more opportunities. Results depend on fit and follow-up.</p>}

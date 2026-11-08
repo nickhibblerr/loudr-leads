@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import ThemeToggle from "@/components/ThemeToggle";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import Brand from "@/components/Brand";
@@ -27,7 +28,7 @@ export default async function AdminLogin({ searchParams }: { searchParams: Promi
   return (
     <div className="site-shell admin-shell">
       <a href="#admin-sign-in" className="skip-link">Skip to admin sign-in</a>
-      <header className="site-header"><Brand /><a href="/" className="admin-entry-button">Back to checkout</a></header>
+      <header className="site-header"><Brand /><div className="site-header-actions"><a href="/" className="admin-entry-button">Back to checkout</a><ThemeToggle /></div></header>
       <main id="admin-sign-in" className="admin-auth-main">
         <section className="admin-access-panel" aria-labelledby="sign-in-heading">
           <p className="eyebrow"><span className="eyebrow-line" /> Loudr Media</p>
