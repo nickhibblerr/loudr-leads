@@ -22,7 +22,8 @@ export function readSavedCart(): SavedCartLine[] {
       if (!isValidLeadState(state) || seen.has(state)) return [];
       seen.add(state);
       const value = saved ?? quantity;
-      return [{ state, mode: mode === "budget" ? "budget" : "leads", value: typeof value === "string" && /^\d{0,8}$/.test(value) ? value : "" }];
+      // Budget is the default; orders saved before budgets existed are lead counts.
+      return [{ state, mode: mode === "leads" || (mode === undefined && quantity !== undefined) ? "leads" : "budget", value: typeof value === "string" && /^\d{0,8}$/.test(value) ? value : "" }];
     });
   } catch {
     return [];

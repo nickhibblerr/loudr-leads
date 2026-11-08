@@ -36,7 +36,7 @@ export default function LeadSelector({ mode, onModeChange, value, onChange, onBl
         <div className="amount-label-row">
           <label className="amount-label" htmlFor={inputId}>{mode === "leads" ? "Number of leads" : "Your lead budget"}</label>
           <div className="mode-toggle" role="group" aria-label="Choose by">
-            {(["leads", "budget"] as const).map((option) => (
+            {(["budget", "leads"] as const).map((option) => (
               <button key={option} type="button" className={mode === option ? "selected" : undefined} aria-pressed={mode === option}
                 disabled={disabled} onClick={() => mode !== option && onModeChange(option)}>{option === "leads" ? "Leads" : "Budget"}</button>
             ))}

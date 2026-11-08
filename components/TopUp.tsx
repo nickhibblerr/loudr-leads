@@ -21,7 +21,7 @@ const appearance = {
 /** One state in the order. `value` is a lead count, or whole dollars of lead spend in budget mode. */
 type Line = { id: string; state: string; value: string; mode: OrderMode };
 let lineSequence = 0;
-const newLine = (state = "", value = "", mode: OrderMode = "leads"): Line => ({ id: `line-${++lineSequence}`, state, value, mode });
+const newLine = (state = "", value = "", mode: OrderMode = "budget"): Line => ({ id: `line-${++lineSequence}`, state, value, mode });
 
 /** The lead count a line orders, or null when it can't be worked out yet. */
 function leadCountFor(line: Line, rate: RateState | undefined): number | null {
@@ -347,7 +347,7 @@ export default function TopUp() {
         {step === "amount" ? (
           <form onSubmit={continueToPayment} noValidate aria-busy={preparing}>
             <h2 className="panel-title">Make room for more.</h2>
-            <p className="panel-description">{multiple ? "Set the leads for each state in your order." : "Choose your state and how many leads you’d like."}</p>
+            <p className="panel-description">{multiple ? "Set a budget or lead count for each state in your order." : "Choose your state and set your budget."}</p>
 
             {!rateCard && !pricingError && <p role="status" className="panel-footnote">Loading current prices…</p>}
             {pricingError && <div role="alert"><p className="form-error">{pricingError}</p><button type="button" className="text-button" onClick={() => setPricingRetry((n) => n + 1)}>Retry prices</button></div>}

@@ -44,7 +44,7 @@ The payment business is Loudr Media (`biz_HqBscEcuZxTgaf`), using its dedicated 
 
 ### Ordering by leads or by budget
 
-Every state in an order has a **Leads | Budget** toggle above its quantity input. In Leads mode the buyer enters a lead count (quick picks 100–250). In Budget mode they enter whole dollars of lead spend (quick picks $10k–$100k); the site orders the most whole leads that budget covers and shows any amount left over, e.g. `= 61 leads · $19,825 ($175 left over)` for $20,000 of Alabama leads. The budget is lead spend only: card payments add the 3% fee on top. Quick budgets below the state's minimum are disabled. Switching modes converts the current value, and the saved order remembers each state's mode.
+Every state in an order has a **Budget | Leads** toggle above its amount input; **Budget is the default**. In Leads mode the buyer enters a lead count (quick picks 100–250). In Budget mode they enter whole dollars of lead spend (quick picks $10k–$100k); the site orders the most whole leads that budget covers and shows any amount left over, e.g. `= 61 leads · $19,825 ($175 left over)` for $20,000 of Alabama leads. The budget is lead spend only: card payments add the 3% fee on top. Quick budgets below the state's minimum are disabled. Switching modes converts the current value, and the saved order remembers each state's mode.
 
 **Minimum order: 50 leads per state** (`MIN_LEAD_QUANTITY` in `lib/lead-pricing.ts`), in either mode. The form explains the minimum (in budget mode as a dollar amount for that state), and `/api/checkout` and `/api/pay` refuse any state below it. Receipts from earlier smaller orders still verify. Checkout always receives lead counts, so Whop plans, receipts and Slack are unchanged.
 
