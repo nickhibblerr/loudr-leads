@@ -28,11 +28,12 @@ test('cart prices each state separately and rounds the card fee once on the whol
   assert.deepEqual(plain(bank.lines.map((l) => [l.state, l.leadCount, l.amountCents])), [['TX', 10, 500000], ['AL', 5, 162500], ['VT', 3, 30000]]);
   assert.equal(bank.leadCount, 18); assert.equal(bank.amountCents, 692500); assert.equal(bank.feeCents, 0); assert.equal(bank.total, 6925);
   const card = cartLib.calculateCartQuote(order, undefined, 'card');
-  assert.equal(card.feeCents, Math.round(692500 * 270 / 10000)); assert.equal(card.totalCents, 692500 + card.feeCents);
-  // AL and AK are $325 each: 2.7% of $650 is $17.55, while rounding each state ($8.775) would give $17.56.
+  assert.equal(card.feeCents, 20775); assert.equal(card.totalCents, 692500 + card.feeCents);
+  // Two $0.50 states: 3% of $1.00 is $0.03, while rounding each state ($0.015) would give $0.04.
+  const cheap = pricing.LEAD_STATES.map((s) => s.code === 'AL' || s.code === 'AK' ? { ...s, price: 0.5 } : s);
   const pair = [{ state: 'AL', quantity: 1 }, { state: 'AK', quantity: 1 }];
-  const perState = pair.map((item) => cartLib.calculateCartQuote([item], undefined, 'card').feeCents).reduce((a, b) => a + b, 0);
-  assert.equal(cartLib.calculateCartQuote(pair, undefined, 'card').feeCents, 1755); assert.equal(perState, 1756);
+  const perState = pair.map((item) => cartLib.calculateCartQuote([item], cheap, 'card').feeCents).reduce((a, b) => a + b, 0);
+  assert.equal(cartLib.calculateCartQuote(pair, cheap, 'card').feeCents, 3); assert.equal(perState, 4);
 });
 
 test('cart rejects empty, duplicate, oversized, sold-out and malformed orders', () => {
@@ -66,7 +67,7 @@ test('checkout uses one quantity line per state and one card fee line for the wh
   const fee = w.plans.find((p) => p.id === checkout.feePlanId);
   assert.equal(checkout.items[3].plan, fee.id); assert.equal(checkout.items[3].quantity, 1);
   assert.equal(fee.initial_price, cart.fee); assert.equal(fee.metadata.fee_scope, 'order'); assert.equal(fee.metadata.state, undefined);
-  assert.equal(fee.title, 'Card fee (2.7%)');
+  assert.equal(fee.title, 'Card fee (3%)'); assert.equal(fee.metadata.payment_fee_percent, '3');
 
   // A second order reuses each state's plan; a matching fee amount reuses the fee item.
   const again = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cart);
@@ -138,7 +139,7 @@ test('receipts for orders placed before carts (state-specific fee items) still v
   const quote = pricing.calculateLeadQuote('AL', 5, undefined, 'card');
   const leadPlan = { ...{ account_id: 'biz_test', product_id: 'prod_test', currency: 'usd', plan_type: 'one_time', visibility: 'quick_link', adaptive_pricing_enabled: true, allow_multiple_quantity: true, initial_price: 325,
     payment_method_configuration: methods.paymentConfigurationFor('card'), metadata: native.leadItemMetadata(quote) }, id: 'plan_lead', account: { id: 'biz_test' }, product: { id: 'prod_test' } };
-  const feePlan = { ...leadPlan, id: 'plan_fee', allow_multiple_quantity: false, initial_price: 43.88, metadata: native.leadItemMetadata(quote, false, 'card_fee') };
+  const feePlan = { ...leadPlan, id: 'plan_fee', allow_multiple_quantity: false, initial_price: 43.88, metadata: { ...native.leadItemMetadata(quote, false, 'card_fee'), payment_fee_amount: '43.88', payment_fee_percent: '2.7' } };
   const payment = { id: 'pay_old', status: 'paid', paid_at: '2026-11-04T00:00:00Z', account_id: 'biz_test', currency: 'usd',
     line_items: [{ plan_id: 'plan_lead', product_id: 'prod_test', quantity: 5, subtotal: { amount: '1625.00', currency: 'usd' } }, { plan_id: 'plan_fee', product_id: 'prod_test', quantity: 1, subtotal: { amount: '43.88', currency: 'usd' } }] };
   const o = orders.paidLeadOrder(payment, [leadPlan, feePlan], 'biz_test', 'prod_test');
@@ -174,4 +175,17 @@ test('Wire checkout offers wire only; existing Wire & ACH state plans are switch
   old.payment_method_configuration = { enabled: ['bank_wire', 'us_bank_account'], disabled: [], include_platform_defaults: false };
   assert.equal(orders.paidLeadOrder(payment, [old], 'biz_test', 'prod_test').orderTotalUsd, 1000);
   assert.match(orders.slackOrderMessage(orders.paidLeadOrder(payment, [old], 'biz_test', 'prod_test')).text, /Checkout: Wire\n/);
+});
+
+test('card fee is 3%; receipts at the earlier 2.7% rate still verify, any other rate is refused', async () => {
+  const f = await paidCart('card');
+  assert.equal(f.cart.feeBasisPoints, 300); assert.equal(f.cart.feeCents, 20775);
+  assert.equal(orders.paidLeadOrder(f.payment, f.plans, 'biz_test', 'prod_test').orderTotalUsd, 7132.75);
+  const fee = f.plans[3];
+  const old = JSON.parse(JSON.stringify(f.payment));
+  const oldFee = { ...fee, initial_price: 186.98, metadata: { ...fee.metadata, payment_fee_amount: '186.98', payment_fee_percent: '2.7' } };
+  old.line_items[3].subtotal.amount = '186.98';
+  assert.equal(orders.paidLeadOrder(old, [...f.plans.slice(0, 3), oldFee], 'biz_test', 'prod_test').orderTotalUsd, 7111.98);
+  const odd = { ...oldFee, metadata: { ...oldFee.metadata, payment_fee_percent: '1' } };
+  assert.throws(() => orders.paidLeadOrder(old, [...f.plans.slice(0, 3), odd], 'biz_test', 'prod_test'), /fee rate/);
 });

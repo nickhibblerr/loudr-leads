@@ -30,13 +30,13 @@ export default function LeadSelector({ value, onChange, onBlur, error, disabled,
           <span className="lead-unit" aria-hidden="true">{count === 1 ? "lead" : "leads"}</span>
         </div>
         <div className="amount-help">
-          <p id="lead-hint">Select a package or enter a custom quantity, including 50+.</p>
+          <p id="lead-hint">Select a package or enter any custom quantity.</p>
           {error && <p className="form-error" id="lead-error" role="alert">{error}</p>}
         </div>
         <div className="preset-grid" role="group" aria-label="Suggested lead quantities">
           {LEAD_PRESETS.map((quantity) => (
             <button key={quantity} type="button" className={`preset${count === quantity ? " selected" : ""}`}
-              aria-label={`${quantity} ${quantity === 1 ? "lead" : "leads"}`} aria-pressed={count === quantity}
+              aria-label={`${quantity} leads`} aria-pressed={count === quantity}
               disabled={disabled} onClick={() => onChange(String(quantity))}>{quantity}</button>
           ))}
         </div>

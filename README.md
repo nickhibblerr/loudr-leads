@@ -18,7 +18,7 @@ Open `http://localhost:3000`. Without payment environment variables, state selec
 
 `lib/lead-pricing.ts` contains the initial rate card for all 50 states; saved admin prices and availability override it. California starts sold out. Presets are 1, 5, 10, 15 and 25 leads; custom whole-number quantities from 1 through 1,000 are supported. Guidance starts after a quantity is entered and progresses to green at 50 leads. It describes opportunity, not a promised conversion rate.
 
-The lead subtotal is the selected state's per-lead price multiplied by quantity. **Wire adds no fee. Card adds 2.7% of the subtotal**, rounded once to the nearest cent. For example, 5 Texas leads at $500 each cost $2,500 by bank or $2,567.50 by card, including a $67.50 card fee. The fee and both totals appear before selecting a checkout, and the selected fee is repeated in the payment summary. All calculations use integer cents and are repeated on the server.
+The lead subtotal is the selected state's per-lead price multiplied by quantity. **Wire adds no fee. Card adds 3% of the subtotal**, rounded once to the nearest cent. For example, 5 Texas leads at $500 each cost $2,500 by wire or $2,575 by card, including a $75 card fee. The rate is `CARD_FEE_BASIS_POINTS` in `lib/payment-methods.ts`; the site reads its label from there. Receipts paid at the earlier 2.7% rate still verify. The fee and both totals appear before selecting a checkout, and the selected fee is repeated in the payment summary. All calculations use integer cents and are repeated on the server.
 
 ## Payment configuration
 
@@ -46,11 +46,11 @@ The payment business is Loudr Media (`biz_HqBscEcuZxTgaf`), using its dedicated 
 
 A buyer can add up to 49 states to one order, each with its own lead count (Whop checkouts take up to 50 items; one is reserved for the card fee). The order form keeps the single-state editor and adds a compact order list once a second state is added; a state already in the order can't be picked twice. The order is saved in the buyer's browser (`localStorage`, key `loudr-leads-cart-v1`) for their next visit and cleared once checkout completes or the return page loads for a placed order.
 
-`/api/checkout` accepts `{ items: [{ state, quantity }], paymentMode, forceUsd, priceVersion }` (the original single `{ state, quantity }` body still works). It prices every state from the saved rate card and returns `cart` (per-state lines, subtotal, fee, total) plus Whop `items`: one quantity line per state using that state's lead plan, and for card orders one `Card fee (2.7%)` line (`fee_scope: order`, reused by amount) priced at 2.7% of the whole order, rounded once. One-state orders also return the original `quote` field.
+`/api/checkout` accepts `{ items: [{ state, quantity }], paymentMode, forceUsd, priceVersion }` (the original single `{ state, quantity }` body still works). It prices every state from the saved rate card and returns `cart` (per-state lines, subtotal, fee, total) plus Whop `items`: one quantity line per state using that state's lead plan, and for card orders one `Card fee (3%)` line (`fee_scope: order`, reused by amount) priced at 3% of the whole order, rounded once. One-state orders also return the original `quote` field.
 
 The webhook verifies every state line on the receipt (state plan identity, quantity, USD amount) and the order-level fee, records each state and quantity, and the Slack alert lists each state with its lead count and the order total. Receipts from single-state orders placed before carts still verify.
 
-Each state has one per-lead Whop plan per checkout type (Wire, Card, Card in USD) with native multiple quantities enabled. `/api/checkout` returns `items: [{ plan, quantity }]`; both Whop Elements and `/api/pay` send native quantities. A five-lead order at $500 uses a $500 plan with quantity 5. A card order adds a separate fee item with quantity 1, priced at 2.7% of the whole lead subtotal, rounded once to cents. This preserves totals such as Alabama $325 × 5 + $43.88, without accumulating per-unit rounding differences. Zero rounded fees omit the fee item.
+Each state has one per-lead Whop plan per checkout type (Wire, Card, Card in USD) with native multiple quantities enabled. `/api/checkout` returns `items: [{ plan, quantity }]`; both Whop Elements and `/api/pay` send native quantities. A five-lead order at $500 uses a $500 plan with quantity 5. A card order adds a separate fee item with quantity 1, priced at 3% of the whole lead subtotal, rounded once to cents. This preserves totals such as Alabama $325 × 5 + $48.75, without accumulating per-unit rounding differences. Zero rounded fees omit the fee item.
 
 Unit plans carry `pricing_model: unit_quantity_v1`, `item_role: leads`, state, historical price per lead and payment/pricing mode; quantity belongs to the receipt, not the reusable unit plan. Fee plans carry `item_role: card_fee` and the quantity/fee they cover. The lead SKU is `LOUDR-LEADS-<state>`. When an admin saves a new price, `/api/admin/prices` reprices that state's existing lead plans in place on Whop (price and `price_per_lead` metadata); sold-out states are left untouched. If Whop is unreachable during the save, checkout reprices the state's plan on its next order. Quantity and price changes reuse the same lead plan per state and mode; card-fee items stay per order and are never repriced. Legacy whole-order plans remain readable for earlier payments but are never selected for new checkouts.
 
@@ -66,7 +66,7 @@ Unit tests validate pricing, unavailable states, quantity boundaries, card-fee r
 
 ## Branding
 
-Black, white and LOUDR yellow are used throughout. The header uses LOUDR's published logo with a text fallback if the image fails. Quantity guidance becomes more encouraging across 1, 5, 10, 15, 25 and 50+ leads.
+Black, white and LOUDR yellow are used throughout. The header uses LOUDR's published logo with a text fallback if the image fails. Quick picks offer 100, 125, 150, 200 and 250 leads; any custom quantity up to 1,000 per state can be typed. Quantity guidance becomes more encouraging as the count grows.
 
 ## State pricing admin
 

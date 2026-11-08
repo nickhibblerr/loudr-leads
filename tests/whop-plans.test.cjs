@@ -147,7 +147,7 @@ test('lead checkout creates and repairs only the selected payment-method configu
     for (const unwanted of ['card', 'bank_wire', 'us_bank_account', 'sepa_debit', 'eu_bank_transfer', 'crypto', 'us_bank_transfer'].filter((method) => !enabled.includes(method))) {
       assert(config.disabled.includes(unwanted), `${mode} must disable ${unwanted}`);
     }
-    assert.equal(created.initial_price, mode === 'card' ? 1027 : 1000);
+    assert.equal(created.initial_price, mode === 'card' ? 1030 : 1000);
     assert.equal(created.metadata.payment_mode, mode);
     const good = planFor(quote, { metadata: leads.leadMetadata(quote), payment_method_configuration: config });
     assert.equal(isTopUpPlanForAmount(good, 'biz_test', 'prod_test', quote), true);
@@ -179,14 +179,14 @@ test('bank and card plans never reuse or repair each other even at equal rounded
   assert.notEqual(keys[0], keys[1]);
 });
 
-test('Make USD preserves card-only methods and the exact 2.7% card total', async () => {
+test('Make USD preserves card-only methods and the exact 3% card total', async () => {
   const quote = leads.calculateLeadQuote('TX', 2, undefined, 'card');
   const adaptive = planFor(quote, { metadata: leads.leadMetadata(quote), payment_method_configuration: preferences.paymentConfigurationFor('card') });
   const client = mockClient([adaptive]);
   await getTopUpPlan(client, 'biz_test', 'prod_test', quote, true);
   const created = client.calls[1][1];
   assert.equal(client.calls[1][0], 'create');
-  assert.equal(created.initial_price, 1027);
+  assert.equal(created.initial_price, 1030);
   assert.equal(created.adaptive_pricing_enabled, false);
   assert.deepEqual(Array.from(created.payment_method_configuration.enabled), ['card']);
   assert.equal(created.metadata.payment_mode, 'card');

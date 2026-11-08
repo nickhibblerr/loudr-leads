@@ -225,8 +225,8 @@ test('card and bank cached plans remain distinct and preserve current saved rate
   const card = await checkout(h, 'TX', 3, { paymentMode: 'card', feePercent: 0, total: 1 });
   assert.equal(bank.quote.totalCents, 5997);
   assert.equal(card.quote.amountCents, 5997);
-  assert.equal(card.quote.feeCents, 162);
-  assert.equal(card.quote.totalCents, 6159);
+  assert.equal(card.quote.feeCents, 180);
+  assert.equal(card.quote.totalCents, 6177);
   assert.notEqual(bank.planId, card.planId);
   assert.equal((await checkout(h, 'TX', 3, { paymentMode: 'card' })).planId, card.planId);
   assert.equal((await checkout(h, 'TX', 3, { paymentMode: 'bank' })).planId, bank.planId);
@@ -235,12 +235,12 @@ test('card and bank cached plans remain distinct and preserve current saved rate
   assert.equal((await h.pay(paymentRequest(bank, { paymentMode: 'card' }))).status, 400);
   assert.equal(h.calls.payments.length, 0);
   assert.equal((await h.pay(paymentRequest(card))).status, 200);
-  assert.equal(h.calls.payments[0].metadata.total_amount, '61.59');
+  assert.equal(h.calls.payments[0].metadata.total_amount, '61.77');
   h.setPrice('TX', 25.5);
   const changed = await checkout(h, 'TX', 3, { paymentMode: 'card' });
   assert.equal(changed.quote.amountCents, 7650);
-  assert.equal(changed.quote.feeCents, 207);
-  assert.equal(changed.quote.totalCents, 7857);
+  assert.equal(changed.quote.feeCents, 230);
+  assert.equal(changed.quote.totalCents, 7880);
   assert.equal(changed.planId, card.planId, 'the card plan is repriced, not replaced');
   assert.equal(h.savedPlans.find((plan) => plan.id === card.planId).initial_price, 25.5);
   assert.equal((await h.pay(paymentRequest(card))).status, 409);
@@ -276,7 +276,7 @@ test('checkout accepts a multi-state order and prices it from saved rates', asyn
   const body = await response.json();
   assert.equal(body.quote, undefined, 'the single-state quote is only returned for one-state orders');
   assert.deepEqual(body.cart.lines.map((line) => [line.state, line.leadCount, line.unitPrice]), [['TX', 10, 500], ['AL', 3, 410]]);
-  assert.equal(body.cart.amountCents, 623000); assert.equal(body.cart.feeCents, 16821); assert.equal(body.cart.totalCents, 639821);
+  assert.equal(body.cart.amountCents, 623000); assert.equal(body.cart.feeCents, 18690); assert.equal(body.cart.totalCents, 641690);
   assert.equal(body.items.length, 3);
   assert.deepEqual(body.items.map((item) => item.quantity), [10, 3, 1]);
   assert.equal(body.items[2].plan, body.feePlanId);

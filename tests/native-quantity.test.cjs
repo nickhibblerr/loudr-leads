@@ -25,12 +25,12 @@ test('native unit plans reuse across quantities; fees round once on the whole su
  assert.equal(h.plans[0].initial_price,325);assert.equal(h.plans[0].allow_multiple_quantity,true);
  assert.equal(h.plans[0].metadata.quantity,undefined);assert.equal(h.plans[0].sku,'LOUDR-LEADS-AL');
  assert.equal(b.items[0].quantity,5);assert.equal(b.items[1].quantity,1);
- assert.equal(h.plans.find(p=>p.id===b.feePlanId).initial_price,43.88);
- assert.equal(five.total,1668.88);assert.notEqual(five.total,(325+8.78)*5);
+ assert.equal(h.plans.find(p=>p.id===b.feePlanId).initial_price,48.75);
+ assert.equal(five.total,1673.75);
 });
 test('paid receipts determine actual lead quantity and ignore buyer metadata and card fee quantity',async()=>{
  const f=await fixture();const o=orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test');
- assert.equal(o.quantity,5);assert.equal(o.items[0].state,'AL');assert.equal(o.orderTotalUsd,1668.88);
+ assert.equal(o.quantity,5);assert.equal(o.items[0].state,'AL');assert.equal(o.orderTotalUsd,1673.75);
  assert.match(orders.slackOrderMessage(o).text,/Leads: 5/);
  const bank=await fixture('bank');assert.equal(bank.checkout.items.length,1);assert.equal(orders.paidLeadOrder(bank.payment,bank.plans,'biz_test','prod_test').quantity,5);
 });

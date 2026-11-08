@@ -39,21 +39,22 @@ test('same total across states or counts remains a distinct order identity', () 
   assert.equal(leadMetadata(tx).price_per_lead, '500');
 });
 
-test('card markup is 2.7% of the order subtotal, rounded once to cents', () => {
+test('card markup is 3% of the order subtotal, rounded once to cents', () => {
   const standard = calculateLeadQuote('TX', 2, undefined, 'card');
   assert.equal(standard.paymentMode, 'card');
   assert.equal(standard.amountCents, 100000);
-  assert.equal(standard.feeBasisPoints, 270);
-  assert.equal(standard.feePercent, 2.7);
-  assert.equal(standard.feeCents, 2700);
-  assert.equal(standard.fee, 27);
-  assert.equal(standard.totalCents, 102700);
-  assert.equal(standard.total, 1027);
+  assert.equal(standard.feeBasisPoints, 300);
+  assert.equal(standard.feePercent, 3);
+  assert.equal(standard.feeCents, 3000);
+  assert.equal(standard.fee, 30);
+  assert.equal(standard.totalCents, 103000);
+  assert.equal(standard.total, 1030);
   for (const [unitPrice, quantity, subtotalCents, feeCents] of [
-    [19.99, 3, 5997, 162],
-    [0.01, 1000, 1000, 27],
+    [19.99, 3, 5997, 180],
+    [0.01, 1000, 1000, 30],
     [0.01, 1, 1, 0],
-    [10000, 1000, 1000000000, 27000000],
+    [0.5, 1, 50, 2],
+    [10000, 1000, 1000000000, 30000000],
   ]) {
     const rates = LEAD_STATES.map((state) => state.code === 'TX' ? { ...state, price: unitPrice } : state);
     const card = calculateLeadQuote('TX', quantity, rates, 'card');
@@ -69,9 +70,9 @@ test('card markup is 2.7% of the order subtotal, rounded once to cents', () => {
   const metadata = leadMetadata(standard);
   assert.equal(metadata.payment_mode, 'card');
   assert.equal(metadata.subtotal_amount, '1000');
-  assert.equal(metadata.payment_fee_percent, '2.7');
-  assert.equal(metadata.payment_fee_amount, '27');
-  assert.equal(metadata.total_amount, '1027');
+  assert.equal(metadata.payment_fee_percent, '3');
+  assert.equal(metadata.payment_fee_amount, '30');
+  assert.equal(metadata.total_amount, '1030');
   assert.equal(metadata.source, 'loudr-leads-site');
 });
 

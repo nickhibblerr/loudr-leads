@@ -142,8 +142,8 @@ test('card checkout and charge use the server surcharge despite client fee or to
     const body = await response.json();
     assert.equal(body.quote.paymentMode, 'card');
     assert.equal(body.quote.amountCents, 100000);
-    assert.equal(body.quote.feeCents, 2700);
-    assert.equal(body.quote.totalCents, 102700);
+    assert.equal(body.quote.feeCents, 3000);
+    assert.equal(body.quote.totalCents, 103000);
     assert.equal(checkout.calls[0].forceUsd, forceUsd);
     const quote = leads.calculateLeadQuote('TX', 2, undefined, 'card');
     const pay = payRoute({ adaptive_pricing_enabled: !forceUsd, metadata: nativePlans.leadItemMetadata(quote, forceUsd) }, 'card');
@@ -152,8 +152,8 @@ test('card checkout and charge use the server surcharge despite client fee or to
     assert.equal(pay.charges.length, 1);
     assert.equal(pay.charges[0].metadata.payment_mode, 'card');
     assert.equal(pay.charges[0].metadata.subtotal_amount, '1000');
-    assert.equal(pay.charges[0].metadata.payment_fee_amount, '27');
-    assert.equal(pay.charges[0].metadata.total_amount, '1027');
+    assert.equal(pay.charges[0].metadata.payment_fee_amount, '30');
+    assert.equal(pay.charges[0].metadata.total_amount, '1030');
   }
 });
 
