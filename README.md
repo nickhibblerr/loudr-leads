@@ -42,6 +42,12 @@ The payment business is Loudr Media (`biz_HqBscEcuZxTgaf`), using its dedicated 
 
 `/api/checkout` and the lower-level `/api/pay` accept `state`, `quantity` (or `leadCount`), `paymentMode` (`bank` or `card`, defaulting to `bank` when omitted), and optional boolean `forceUsd`. If both quantity aliases are present, they must match. Amounts, unit prices, fee percentages and totals supplied by clients cannot alter the server price. Invalid payment modes, unknown or sold-out states, missing/fractional quantities, quantities above 1,000 and non-USD nominal prices are rejected before calling Whop.
 
+### Ordering by leads or by budget
+
+Every state in an order has a **Leads | Budget** toggle above its quantity input. In Leads mode the buyer enters a lead count (quick picks 100–250). In Budget mode they enter whole dollars of lead spend (quick picks $10k–$100k); the site orders the most whole leads that budget covers and shows any amount left over, e.g. `= 61 leads · $19,825 ($175 left over)` for $20,000 of Alabama leads. The budget is lead spend only: card payments add the 3% fee on top. Quick budgets below the state's minimum are disabled. Switching modes converts the current value, and the saved order remembers each state's mode.
+
+**Minimum order: 50 leads per state** (`MIN_LEAD_QUANTITY` in `lib/lead-pricing.ts`), in either mode. The form explains the minimum (in budget mode as a dollar amount for that state), and `/api/checkout` and `/api/pay` refuse any state below it. Receipts from earlier smaller orders still verify. Checkout always receives lead counts, so Whop plans, receipts and Slack are unchanged.
+
 ### Multi-state orders
 
 A buyer can add up to 49 states to one order, each with its own lead count (Whop checkouts take up to 50 items; one is reserved for the card fee). The order form keeps the single-state editor and adds a compact order list once a second state is added; a state already in the order can't be picked twice. The order is saved in the buyer's browser (`localStorage`, key `loudr-leads-cart-v1`) for their next visit and cleared once checkout completes or the return page loads for a placed order.

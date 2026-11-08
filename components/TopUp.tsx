@@ -5,9 +5,9 @@ import { loadWhop } from "@whop/elements";
 import { Checkout, CheckoutElement, WhopElements } from "@whop/elements-react";
 import { ArrowIcon, LockIcon } from "@/components/Icons";
 import { formatAmount } from "@/lib/top-up";
-import { MAX_LEAD_QUANTITY } from "@/lib/lead-pricing";
-import { calculateCartQuote, cartMetadata, MAX_CART_STATES, type CartQuote } from "@/lib/lead-cart";
-import { isValidLeadCount } from "@/lib/leads";
+import { MAX_LEAD_QUANTITY, MIN_LEAD_QUANTITY } from "@/lib/lead-pricing";
+import { calculateCartQuote, cartMetadata, leadsForBudget, MAX_CART_STATES, type CartQuote } from "@/lib/lead-cart";
+import { isValidLeadCount, type OrderMode } from "@/lib/leads";
 import { clearSavedCart, readSavedCart, writeSavedCart } from "@/lib/saved-cart";
 import LeadSelector from "@/components/LeadSelector";
 import type { RateCard, RateState } from "@/lib/rate-card";
@@ -18,14 +18,34 @@ const appearance = {
   theme: { appearance: "dark" as const, accentColor: "yellow" as const, grayColor: "gray" as const },
 };
 
-type Line = { id: string; state: string; value: string };
+/** One state in the order. `value` is a lead count, or whole dollars of lead spend in budget mode. */
+type Line = { id: string; state: string; value: string; mode: OrderMode };
 let lineSequence = 0;
-const newLine = (state = "", value = ""): Line => ({ id: `line-${++lineSequence}`, state, value });
+const newLine = (state = "", value = "", mode: OrderMode = "leads"): Line => ({ id: `line-${++lineSequence}`, state, value, mode });
 
-function amountError(value: string, max: number): string | null {
-  if (!value.trim()) return "Choose how many leads you’d like.";
-  if (!isValidLeadCount(Number(value))) return "Enter a whole number of leads, starting at 1.";
-  if (Number(value) > max) return `Choose up to ${max.toLocaleString("en-US")} leads for this state.`;
+/** The lead count a line orders, or null when it can't be worked out yet. */
+function leadCountFor(line: Line, rate: RateState | undefined): number | null {
+  const entered = Number(line.value);
+  if (!line.value.trim() || !Number.isSafeInteger(entered) || entered < 1) return null;
+  if (line.mode === "leads") return entered;
+  return rate?.price ? leadsForBudget(entered, rate.price)?.leadCount ?? null : null;
+}
+
+function amountError(line: Line, rate: RateState | undefined): string | null {
+  const entered = Number(line.value);
+  if (line.mode === "leads") {
+    if (!line.value.trim()) return "Choose how many leads you’d like.";
+    if (!isValidLeadCount(entered)) return "Enter a whole number of leads.";
+    if (entered < MIN_LEAD_QUANTITY) return `The minimum order is ${MIN_LEAD_QUANTITY} leads per state.`;
+    if (entered > MAX_LEAD_QUANTITY) return `Choose up to ${MAX_LEAD_QUANTITY.toLocaleString("en-US")} leads for this state.`;
+    return null;
+  }
+  if (!line.value.trim()) return "Enter your lead budget.";
+  if (!Number.isSafeInteger(entered) || entered < 1) return "Enter your budget in whole dollars.";
+  if (!rate?.price) return null; // The state error explains what's missing.
+  const count = leadCountFor(line, rate) ?? 0;
+  if (count < MIN_LEAD_QUANTITY) return `The minimum is ${MIN_LEAD_QUANTITY} leads — ${formatAmount(MIN_LEAD_QUANTITY * rate.price)} for ${rate.name}.`;
+  if (count > MAX_LEAD_QUANTITY) return `That budget covers more than ${MAX_LEAD_QUANTITY.toLocaleString("en-US")} leads. The most for ${rate.name} is ${formatAmount(MAX_LEAD_QUANTITY * rate.price)}.`;
   return null;
 }
 
@@ -76,7 +96,6 @@ export default function TopUp() {
   const [elements, setElements] = useState<ReturnType<typeof loadWhop> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const paymentTitleRef = useRef<HTMLHeadingElement>(null);
-  const maxLeads = MAX_LEAD_QUANTITY;
 
   const active = lines.find((line) => line.id === activeId) ?? lines[0];
   const rateFor = (code: string) => rateCard?.states.find((item) => item.code === code);
@@ -84,10 +103,11 @@ export default function TopUp() {
   const value = active.value;
   const multiple = lines.length > 1;
   const stateError = rateCard && (stateTouched || (active.state && selectedState?.price === null)) ? stateErrorFor(active, selectedState) : null;
-  const error = touched ? amountError(value, maxLeads) : null;
+  const error = touched ? amountError(active, selectedState) : null;
   const usedStates = useMemo(() => new Set(lines.filter((line) => line.id !== active.id).map((line) => line.state)), [lines, active.id]);
-  const lineValid = (line: Line) => !stateErrorFor(line, rateFor(line.state)) && !amountError(line.value, maxLeads);
-  const validItems = lines.filter(lineValid).map((line) => ({ state: line.state, quantity: Number(line.value) }));
+  const lineValid = (line: Line) => !stateErrorFor(line, rateFor(line.state)) && !amountError(line, rateFor(line.state));
+  const itemFor = (line: Line) => ({ state: line.state, quantity: leadCountFor(line, rateFor(line.state)) ?? 0 });
+  const validItems = lines.filter(lineValid).map(itemFor);
   const itemsKey = JSON.stringify(validItems);
   const bankQuote = useMemo(() => {
     try { return rateCard && validItems.length ? calculateCartQuote(validItems, rateCard.states, "bank") : null; }
@@ -108,14 +128,14 @@ export default function TopUp() {
   useEffect(() => {
     const saved = readSavedCart();
     if (saved.length) {
-      const restoredLines = saved.map((line) => newLine(line.state, line.quantity));
+      const restoredLines = saved.map((line) => newLine(line.state, line.value, line.mode));
       setLines(restoredLines);
       setActiveId(restoredLines[0].id);
     }
     setRestored(true);
   }, []);
   useEffect(() => {
-    if (restored && !completed) writeSavedCart(lines.map((line) => ({ state: line.state, quantity: line.value })));
+    if (restored && !completed) writeSavedCart(lines.map((line) => ({ state: line.state, value: line.value, mode: line.mode })));
   }, [lines, restored, completed]);
 
   // Load the hosted SDK while the buyer chooses an amount, rather than after Continue.
@@ -155,6 +175,18 @@ export default function TopUp() {
     setCheckoutError(null);
   }
 
+  // Switching between leads and budget keeps the same order where it can.
+  function changeMode(mode: OrderMode) {
+    const rate = selectedState;
+    const count = leadCountFor(active, rate);
+    let value = "";
+    if (mode === "budget" && count && rate?.price) value = String(Math.ceil(count * rate.price));
+    if (mode === "leads" && count) value = String(count);
+    updateActive({ mode, value });
+    setTouched(Boolean(value));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
   function activate(id: string, focus: "state" | "amount" = "amount") {
     if (preparing) return;
     setActiveId(id);
@@ -172,7 +204,7 @@ export default function TopUp() {
       (stateErrorFor(active, selectedState) ? stateRef.current : inputRef.current)?.focus();
       return;
     }
-    const line = newLine();
+    const line = newLine("", "", active.mode);
     setLines((current) => [...current, line]);
     setCheckoutError(null);
     activate(line.id, "state");
@@ -240,7 +272,7 @@ export default function TopUp() {
     }
     if (!rateCard || pricingError) { inputRef.current?.focus(); return; }
     let nextQuote: CartQuote;
-    try { nextQuote = calculateCartQuote(kept.map((line) => ({ state: line.state, quantity: Number(line.value) })), rateCard.states, nextMode); }
+    try { nextQuote = calculateCartQuote(kept.map(itemFor), rateCard.states, nextMode); }
     catch (cause) { setCheckoutError(errorMessage(cause)); return; }
     preparingRef.current = true;
     setPaymentMode(nextMode);
@@ -326,7 +358,7 @@ export default function TopUp() {
                 <ul className="cart-lines" aria-labelledby="cart-heading">
                   {lines.map((line) => {
                     const rate = rateFor(line.state);
-                    const count = Number(line.value);
+                    const count = leadCountFor(line, rate) ?? 0;
                     const valid = lineValid(line);
                     const isActive = line.id === active.id;
                     return (
@@ -359,8 +391,8 @@ export default function TopUp() {
               </option>)}
             </select>
             {stateError && <p id="state-error" className="form-error" role="alert">{stateError}</p>}
-            <LeadSelector value={value} onChange={(next) => { updateActive({ value: next }); setTouched(true); }}
-              onBlur={() => setTouched(true)} error={error} disabled={preparing} max={maxLeads} inputRef={inputRef} />
+            <LeadSelector mode={active.mode} onModeChange={changeMode} value={value} onChange={(next) => { updateActive({ value: next }); setTouched(true); }}
+              onBlur={() => setTouched(true)} error={error} disabled={preparing} unitPrice={selectedState?.price ?? null} inputRef={inputRef} />
 
             <button type="button" className="add-state-button" onClick={addState} disabled={preparing || !canAddState || !rateCard}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>

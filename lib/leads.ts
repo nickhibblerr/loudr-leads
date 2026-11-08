@@ -1,4 +1,8 @@
 export const LEAD_PRESETS = [100, 125, 150, 200, 250] as const;
+/** Quick budgets in whole dollars of lead spend (before any card fee). */
+export const BUDGET_PRESETS = [10_000, 25_000, 50_000, 75_000, 100_000] as const;
+/** How a buyer sets a state's order: by lead count or by a lead-spend budget. */
+export type OrderMode = "leads" | "budget";
 
 export function isValidLeadCount(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 1;

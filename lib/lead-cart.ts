@@ -1,4 +1,4 @@
-import { calculateLeadQuote, LEAD_STATES, requestedLeadCount, type LeadQuote, type LeadRate, type LeadState } from "@/lib/lead-pricing";
+import { calculateLeadQuote, LEAD_STATES, MIN_LEAD_QUANTITY, minimumOrderMessage, requestedLeadCount, type LeadQuote, type LeadRate, type LeadState } from "@/lib/lead-pricing";
 import { CARD_FEE_BASIS_POINTS, effectiveForceUsd, requestedPaymentMode, type PaymentMode } from "@/lib/payment-methods";
 
 /** Whop checkouts take up to 50 items; one is reserved for the card fee. */
@@ -13,7 +13,7 @@ export type CartQuote = {
 export type CartItemInput = { state: unknown; quantity: unknown };
 
 /** Prices every state separately; the card fee is a percentage of the whole cart, rounded once. */
-export function calculateCartQuote(items: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank", cardFeeBasisPoints: number = CARD_FEE_BASIS_POINTS): CartQuote {
+export function calculateCartQuote(items: unknown, rates: readonly LeadRate[] = LEAD_STATES, paymentMode: PaymentMode = "bank", cardFeeBasisPoints: number = CARD_FEE_BASIS_POINTS, minLeads: number = MIN_LEAD_QUANTITY): CartQuote {
   const mode = requestedPaymentMode(paymentMode);
   if (!Array.isArray(items) || items.length === 0) throw new Error("Add at least one state to your order.");
   if (items.length > MAX_CART_STATES) throw new Error(`An order can include up to ${MAX_CART_STATES} states.`);
@@ -23,6 +23,7 @@ export function calculateCartQuote(items: unknown, rates: readonly LeadRate[] = 
     const { state, quantity } = item as CartItemInput;
     const quote = calculateLeadQuote(state, quantity, rates, "bank");
     if (seen.has(quote.state)) throw new Error(`${quote.stateName} is already in your order. Change its lead count instead.`);
+    if (quote.leadCount < minLeads) throw new Error(minimumOrderMessage(quote.stateName));
     seen.add(quote.state);
     return { state: quote.state, stateName: quote.stateName, leadCount: quote.leadCount, unitPrice: quote.unitPrice,
       amountCents: quote.amountCents, amount: quote.amount };
@@ -64,4 +65,15 @@ export function cartMetadata(cart: CartQuote, forceUsd = false): Record<string, 
     ...(cart.lines.length === 1 ? { state: cart.lines[0].state, state_name: cart.lines[0].stateName, price_per_lead: String(cart.lines[0].unitPrice) } : {}),
     subtotal_amount: String(cart.amount), payment_fee_percent: String(cart.feePercent), payment_fee_amount: String(cart.fee),
     total_amount: String(cart.total) };
+}
+
+export type BudgetFit = { leadCount: number; spentCents: number; leftoverCents: number };
+
+/** The most whole leads a lead-spend budget (in whole dollars, before any card fee) can buy. */
+export function leadsForBudget(budgetDollars: number, unitPrice: number): BudgetFit | null {
+  if (!Number.isSafeInteger(budgetDollars) || budgetDollars < 1 || !Number.isFinite(unitPrice) || unitPrice <= 0) return null;
+  const budgetCents = budgetDollars * 100;
+  const priceCents = Math.round(unitPrice * 100);
+  const leadCount = Math.floor(budgetCents / priceCents);
+  return { leadCount, spentCents: leadCount * priceCents, leftoverCents: budgetCents - leadCount * priceCents };
 }

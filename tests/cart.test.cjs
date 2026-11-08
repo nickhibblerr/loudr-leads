@@ -2,6 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTypeScript: load } = require('./load-ts.cjs');
 const plain = (value) => JSON.parse(JSON.stringify(value));
+// Pricing-arithmetic tests use small orders; the 50-lead order minimum is tested on its own below.
+const quoteOf = (items, rates, mode = 'bank') => cartLib.calculateCartQuote(items, rates, mode, undefined, 1);
 const methods = load('lib/payment-methods.ts');
 const topup = load('lib/top-up.ts');
 const pricing = load('lib/lead-pricing.ts', { '@/lib/payment-methods': methods, '@/lib/top-up': topup });
@@ -24,30 +26,30 @@ function whop() {
 const order = [{ state: 'TX', quantity: 10 }, { state: 'AL', quantity: 5 }, { state: 'VT', quantity: 3 }];
 
 test('cart prices each state separately and rounds the card fee once on the whole order', () => {
-  const bank = cartLib.calculateCartQuote(order, undefined, 'bank');
+  const bank = quoteOf(order, undefined, 'bank');
   assert.deepEqual(plain(bank.lines.map((l) => [l.state, l.leadCount, l.amountCents])), [['TX', 10, 500000], ['AL', 5, 162500], ['VT', 3, 30000]]);
   assert.equal(bank.leadCount, 18); assert.equal(bank.amountCents, 692500); assert.equal(bank.feeCents, 0); assert.equal(bank.total, 6925);
-  const card = cartLib.calculateCartQuote(order, undefined, 'card');
+  const card = quoteOf(order, undefined, 'card');
   assert.equal(card.feeCents, 20775); assert.equal(card.totalCents, 692500 + card.feeCents);
   // Two $0.50 states: 3% of $1.00 is $0.03, while rounding each state ($0.015) would give $0.04.
   const cheap = pricing.LEAD_STATES.map((s) => s.code === 'AL' || s.code === 'AK' ? { ...s, price: 0.5 } : s);
   const pair = [{ state: 'AL', quantity: 1 }, { state: 'AK', quantity: 1 }];
-  const perState = pair.map((item) => cartLib.calculateCartQuote([item], cheap, 'card').feeCents).reduce((a, b) => a + b, 0);
-  assert.equal(cartLib.calculateCartQuote(pair, cheap, 'card').feeCents, 3); assert.equal(perState, 4);
+  const perState = pair.map((item) => quoteOf([item], cheap, 'card').feeCents).reduce((a, b) => a + b, 0);
+  assert.equal(quoteOf(pair, cheap, 'card').feeCents, 3); assert.equal(perState, 4);
 });
 
 test('cart rejects empty, duplicate, oversized, sold-out and malformed orders', () => {
-  assert.throws(() => cartLib.calculateCartQuote([]), /at least one state/);
-  assert.throws(() => cartLib.calculateCartQuote('TX'), /at least one state/);
-  assert.throws(() => cartLib.calculateCartQuote([{ state: 'TX', quantity: 1 }, { state: 'TX', quantity: 2 }]), /already in your order/);
-  assert.throws(() => cartLib.calculateCartQuote([{ state: 'CA', quantity: 1 }]), /sold out/);
-  assert.throws(() => cartLib.calculateCartQuote([{ state: 'TX', quantity: 0 }]), /whole number/);
-  assert.throws(() => cartLib.calculateCartQuote([{ state: 'TX', quantity: 1001 }]), /maximum/);
-  assert.throws(() => cartLib.calculateCartQuote([null]), /valid state/);
+  assert.throws(() => quoteOf([]), /at least one state/);
+  assert.throws(() => quoteOf('TX'), /at least one state/);
+  assert.throws(() => quoteOf([{ state: 'TX', quantity: 1 }, { state: 'TX', quantity: 2 }]), /already in your order/);
+  assert.throws(() => quoteOf([{ state: 'CA', quantity: 1 }]), /sold out/);
+  assert.throws(() => quoteOf([{ state: 'TX', quantity: 0 }]), /whole number/);
+  assert.throws(() => quoteOf([{ state: 'TX', quantity: 1001 }]), /maximum/);
+  assert.throws(() => quoteOf([null]), /valid state/);
   const fifty = pricing.LEAD_STATES.filter((s) => s.price !== null).map((s) => ({ state: s.code, quantity: 1 }));
   assert.equal(fifty.length, 49);
-  assert.equal(cartLib.calculateCartQuote(fifty).lines.length, 49);
-  assert.throws(() => cartLib.calculateCartQuote([...fifty, { state: 'TX', quantity: 1 }]), /up to 49 states/);
+  assert.equal(quoteOf(fifty).lines.length, 49);
+  assert.throws(() => quoteOf([...fifty, { state: 'TX', quantity: 1 }]), /up to 49 states/);
 });
 
 test('requests accept a list of items or the original single state, never both', () => {
@@ -58,7 +60,7 @@ test('requests accept a list of items or the original single state, never both',
 
 test('checkout uses one quantity line per state and one card fee line for the whole order', async () => {
   const w = whop();
-  const cart = cartLib.calculateCartQuote(order, undefined, 'card');
+  const cart = quoteOf(order, undefined, 'card');
   const checkout = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cart);
   assert.equal(w.lists, 1, 'plans are listed once per checkout');
   assert.equal(checkout.items.length, 4);
@@ -72,23 +74,23 @@ test('checkout uses one quantity line per state and one card fee line for the wh
   // A second order reuses each state's plan; a matching fee amount reuses the fee item.
   const again = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cart);
   assert.deepEqual(plain(again.items), plain(checkout.items)); assert.equal(w.plans.length, 4);
-  const single = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cartLib.calculateCartQuote([{ state: 'TX', quantity: 2 }], undefined, 'bank'));
+  const single = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', quoteOf([{ state: 'TX', quantity: 2 }], undefined, 'bank'));
   assert.equal(single.items.length, 1); assert.equal(single.feePlanId, null);
   assert.notEqual(single.items[0].plan, checkout.items[0].plan, 'Wire & ACH and Card keep separate state plans');
 });
 
 test('a changed price reprices that state plan inside a cart checkout', async () => {
   const w = whop();
-  await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cartLib.calculateCartQuote(order, undefined, 'bank'));
+  await native.getCartCheckout(w.client, 'biz_test', 'prod_test', quoteOf(order, undefined, 'bank'));
   const rates = pricing.LEAD_STATES.map((s) => s.code === 'AL' ? { ...s, price: 410 } : s);
-  const next = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cartLib.calculateCartQuote(order, rates, 'bank'));
+  const next = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', quoteOf(order, rates, 'bank'));
   assert.equal(w.updates.length, 1); assert.equal(w.plans.length, 3);
   assert.equal(w.plans.find((p) => p.id === next.items[1].plan).initial_price, 410);
 });
 
 async function paidCart(mode = 'card', items = order) {
   const w = whop();
-  const cart = cartLib.calculateCartQuote(items, undefined, mode);
+  const cart = quoteOf(items, undefined, mode);
   const checkout = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cart);
   const payment = { id: 'pay_cart', status: 'paid', paid_at: '2026-11-07T12:00:00Z', account_id: 'biz_test', product_id: null, plan_id: null, currency: 'usd', metadata: { state: 'CA', quantity: '999' },
     line_items: checkout.items.map((item) => { const p = w.plans.find((plan) => plan.id === item.plan); return { plan_id: p.id, product_id: 'prod_test', quantity: item.quantity, subtotal: { amount: (p.initial_price * item.quantity).toFixed(2), currency: 'usd' } }; }) };
@@ -158,7 +160,7 @@ test('Wire checkout offers wire only; existing Wire & ACH state plans are switch
   const config = methods.paymentConfigurationFor('bank');
   assert.deepEqual(plain(config.enabled), ['bank_wire']);
   assert(config.disabled.includes('us_bank_account') && methods.paymentConfigurationFor('card').disabled.includes('us_bank_account'));
-  const checkout = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', cartLib.calculateCartQuote([{ state: 'TX', quantity: 2 }], undefined, 'bank'));
+  const checkout = await native.getCartCheckout(w.client, 'biz_test', 'prod_test', quoteOf([{ state: 'TX', quantity: 2 }], undefined, 'bank'));
   assert.equal(checkout.items[0].plan, 'plan_old', 'the existing plan is kept');
   assert.equal(w.plans.length, 1);
   assert.deepEqual(plain(old.payment_method_configuration.enabled), ['bank_wire']);
@@ -188,4 +190,22 @@ test('card fee is 3%; receipts at the earlier 2.7% rate still verify, any other 
   assert.equal(orders.paidLeadOrder(old, [...f.plans.slice(0, 3), oldFee], 'biz_test', 'prod_test').orderTotalUsd, 7111.98);
   const odd = { ...oldFee, metadata: { ...oldFee.metadata, payment_fee_percent: '1' } };
   assert.throws(() => orders.paidLeadOrder(old, [...f.plans.slice(0, 3), odd], 'biz_test', 'prod_test'), /fee rate/);
+});
+
+test('orders need at least 50 leads per state; receipts for smaller earlier orders still verify', async () => {
+  assert.equal(pricing.MIN_LEAD_QUANTITY, 50);
+  assert.throws(() => cartLib.calculateCartQuote([{ state: 'TX', quantity: 49 }]), /minimum order is 50 leads per state \(Texas\)/);
+  assert.throws(() => cartLib.calculateCartQuote([{ state: 'TX', quantity: 50 }, { state: 'AL', quantity: 10 }], undefined, 'card'), /Alabama/);
+  assert.equal(cartLib.calculateCartQuote([{ state: 'TX', quantity: 50 }, { state: 'AL', quantity: 120 }]).leadCount, 170);
+  const f = await paidCart('card');
+  assert.equal(orders.paidLeadOrder(f.payment, f.plans, 'biz_test', 'prod_test').quantity, 18, 'a receipt below the minimum is still recorded');
+});
+
+test('a budget buys the most whole leads it covers and reports the leftover', () => {
+  assert.deepEqual(plain(cartLib.leadsForBudget(20000, 500)), { leadCount: 40, spentCents: 2000000, leftoverCents: 0 });
+  assert.deepEqual(plain(cartLib.leadsForBudget(20000, 325)), { leadCount: 61, spentCents: 1982500, leftoverCents: 17500 });
+  assert.deepEqual(plain(cartLib.leadsForBudget(100, 19.99)), { leadCount: 5, spentCents: 9995, leftoverCents: 5 });
+  assert.equal(cartLib.leadsForBudget(400, 500).leadCount, 0);
+  for (const bad of [0, -5, 1.5, NaN]) assert.equal(cartLib.leadsForBudget(bad, 500), null);
+  assert.equal(cartLib.leadsForBudget(1000, 0), null);
 });

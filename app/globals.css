@@ -186,6 +186,20 @@ h1 { margin: 0; font-size: clamp(44px, 4.7vw, 66px); font-weight: 500; line-heig
 .add-state-button:disabled { color: var(--muted); border-color: #333; cursor: not-allowed; }
 .quote-summary > .cart-subtotal { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); color: #fff; }
 .payment-summary > div + div { margin-top: 8px; }
+/* Leads / Budget toggle */
+.amount-label-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 36px; margin-bottom: 12px; }
+.amount-label-row .amount-label { margin: 0; }
+.mode-toggle { display: inline-flex; padding: 3px; border: 1px solid #383838; border-radius: 7px; background: #141414; }
+.mode-toggle button { min-height: 28px; padding: 5px 13px; border: 0; border-radius: 5px; background: transparent; color: #b5b5b5; font-size: 11px; font-weight: 500; cursor: pointer; transition: background .15s, color .15s; }
+.mode-toggle button:hover:not(:disabled):not(.selected) { color: #fff; background: #222; }
+.mode-toggle button.selected { background: var(--accent); color: #111; }
+.mode-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.amount-prefix { color: #fff; font-size: clamp(32px, 3.6vw, 52px); font-weight: 600; line-height: 1; align-self: center; }
+.budget-result { color: var(--secondary) !important; font-size: 12px !important; margin-bottom: 4px !important; }
+.budget-result strong { color: var(--accent); font-weight: 600; }
+.budget-leftover { color: #aaaaaa; }
+.preset:disabled { opacity: .4; cursor: not-allowed; }
+.preset:disabled:hover { background: #171717; border-color: #383838; }
 @media (min-width: 1500px) { .main-grid { padding-top: 100px; padding-bottom: 110px; } }
 @media (max-width: 1100px) {
   .site-shell { padding: 32px 36px 24px; }

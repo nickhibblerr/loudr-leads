@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const { loadTypeScript } = require('./load-ts.cjs');
 const pricing = loadTypeScript('lib/top-up.ts');
 const preferences = loadTypeScript('lib/payment-methods.ts');
-const leads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
+const realLeads = loadTypeScript('lib/lead-pricing.ts', { '@/lib/top-up': pricing, '@/lib/payment-methods': preferences });
+// These route tests cover caching, pricing and tampering with small orders; the 50-lead minimum has its own tests.
+const leads = { ...realLeads, MIN_LEAD_QUANTITY: 1 };
 const plans = loadTypeScript('lib/whop-plans.ts', { '@/lib/payment-methods': preferences, '@/lib/top-up': pricing, '@/lib/lead-pricing': leads });
 const cartLib=loadTypeScript('lib/lead-cart.ts',{'@/lib/lead-pricing':leads,'@/lib/payment-methods':preferences});
 const nativePlans = loadTypeScript('lib/lead-checkout.ts', { '@/lib/payment-methods': preferences, '@/lib/lead-cart': cartLib });
