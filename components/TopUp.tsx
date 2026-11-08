@@ -13,10 +13,11 @@ import LeadSelector from "@/components/LeadSelector";
 import type { RateCard, RateState } from "@/lib/rate-card";
 import type { LeadCheckoutItem } from "@/lib/lead-checkout";
 import { CARD_FEE_LABEL, type PaymentMode } from "@/lib/payment-methods";
+import { currentTheme, THEME_EVENT, type Theme } from "@/lib/theme";
 
-const appearance = {
-  theme: { appearance: "dark" as const, accentColor: "yellow" as const, grayColor: "gray" as const },
-};
+const appearanceFor = (theme: Theme) => ({
+  theme: { appearance: theme, accentColor: "yellow" as const, grayColor: "gray" as const },
+});
 
 /** One state in the order. `value` is a lead count, or whole dollars of lead spend in budget mode. */
 type Line = { id: string; state: string; value: string; mode: OrderMode };
@@ -97,6 +98,15 @@ export default function TopUp() {
   const [elements, setElements] = useState<ReturnType<typeof loadWhop> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const paymentTitleRef = useRef<HTMLHeadingElement>(null);
+  // The embedded Whop checkout follows the site's light/dark theme.
+  const [theme, setTheme] = useState<Theme>("light");
+  useEffect(() => {
+    setTheme(currentTheme());
+    const sync = () => setTheme(currentTheme());
+    window.addEventListener(THEME_EVENT, sync);
+    return () => window.removeEventListener(THEME_EVENT, sync);
+  }, []);
+  const appearance = useMemo(() => appearanceFor(theme), [theme]);
 
   const active = lines.find((line) => line.id === activeId) ?? lines[0];
   const rateFor = (code: string) => rateCard?.states.find((item) => item.code === code);
@@ -432,7 +442,7 @@ export default function TopUp() {
                   <p className="form-error">{elementError}</p>
                   <button className="text-button" type="button" onClick={() => { setElementError(null); setCheckoutLoading(true); setCheckoutVersion((version) => version + 1); }}>Reload checkout</button>
                 </div>}
-                <Checkout key={`${JSON.stringify(checkoutItems)}:${checkoutVersion}`} items={checkoutItems}
+                <Checkout key={`${JSON.stringify(checkoutItems)}:${checkoutVersion}:${theme}`} items={checkoutItems}
                   metadata={checkoutMetadata}
                   returnUrl={`${siteUrl}/checkout/return?order=${orderId}`}
                   onLoadingChange={setCheckoutLoading}

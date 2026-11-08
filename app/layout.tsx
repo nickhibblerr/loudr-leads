@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { preloadHints } from "@whop/elements";
 import "./globals.css";
+import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "Build your pipeline | LOUDR Media",
@@ -11,8 +12,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    // The boot script may set data-theme before React hydrates.
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         {preloadHints({ wallets: false }).map((hint) => (
           <link key={`${hint.rel}:${hint.href}`} {...hint} />
         ))}

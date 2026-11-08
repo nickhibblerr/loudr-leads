@@ -102,13 +102,18 @@ test('a paid multi-state receipt records every state and quantity from the recei
   for (const mode of ['card', 'bank']) {
     const f = await paidCart(mode);
     const o = orders.paidLeadOrder(f.payment, f.plans, 'biz_test', 'prod_test');
-    assert.deepEqual(plain(o.items), [{ state: 'TX', stateName: 'Texas', quantity: 10 }, { state: 'AL', stateName: 'Alabama', quantity: 5 }, { state: 'VT', stateName: 'Vermont', quantity: 3 }]);
+    assert.deepEqual(plain(o.items), [
+      { state: 'TX', stateName: 'Texas', quantity: 10, pricePerLead: 500, subtotalUsd: 5000 },
+      { state: 'AL', stateName: 'Alabama', quantity: 5, pricePerLead: 325, subtotalUsd: 1625 },
+      { state: 'VT', stateName: 'Vermont', quantity: 3, pricePerLead: 100, subtotalUsd: 300 }]);
+    assert.equal(o.leadSubtotalUsd, 6925); assert.equal(o.cardFeeUsd, mode === 'card' ? 207.75 : 0);
+    assert.deepEqual(plain(o.product), { id: 'prod_test', name: 'LOUDR Leads' });
     assert.equal(o.quantity, 18); assert.equal(o.orderTotalUsd, f.cart.total); assert.equal(o.paymentMode, mode);
     const text = orders.slackOrderMessage(o).text;
-    assert.match(text, /States:\n• Texas \(TX\): 10 leads\n• Alabama \(AL\): 5 leads\n• Vermont \(VT\): 3 leads\nTotal leads: 18/);
+    assert.match(text, /States:\n• Texas \(TX\): 10 leads × \$500\.00 = \$5,000\.00\n• Alabama \(AL\): 5 leads × \$325\.00 = \$1,625\.00\n• Vermont \(VT\): 3 leads × \$100\.00 = \$300\.00\nTotal leads: 18\nLead subtotal: \$6,925\.00/);
   }
   const one = await paidCart('bank', [{ state: 'TX', quantity: 1 }]);
-  assert.match(orders.slackOrderMessage(orders.paidLeadOrder(one.payment, one.plans, 'biz_test', 'prod_test')).text, /State: Texas \(TX\)\nLeads: 1\n/);
+  assert.match(orders.slackOrderMessage(orders.paidLeadOrder(one.payment, one.plans, 'biz_test', 'prod_test')).text, /State:\n• Texas \(TX\): 1 lead × \$500\.00 = \$500\.00\nTotal leads: 1\n/);
 });
 
 test('multi-state receipts reject tampered quantities, amounts, fees and items', async () => {
@@ -145,7 +150,7 @@ test('receipts for orders placed before carts (state-specific fee items) still v
   const payment = { id: 'pay_old', status: 'paid', paid_at: '2026-11-04T00:00:00Z', account_id: 'biz_test', currency: 'usd',
     line_items: [{ plan_id: 'plan_lead', product_id: 'prod_test', quantity: 5, subtotal: { amount: '1625.00', currency: 'usd' } }, { plan_id: 'plan_fee', product_id: 'prod_test', quantity: 1, subtotal: { amount: '43.88', currency: 'usd' } }] };
   const o = orders.paidLeadOrder(payment, [leadPlan, feePlan], 'biz_test', 'prod_test');
-  assert.deepEqual(plain(o.items), [{ state: 'AL', stateName: 'Alabama', quantity: 5 }]); assert.equal(o.orderTotalUsd, 1668.88);
+  assert.deepEqual(plain(o.items), [{ state: 'AL', stateName: 'Alabama', quantity: 5, pricePerLead: 325, subtotalUsd: 1625 }]); assert.equal(o.orderTotalUsd, 1668.88);
   assert.equal(w.plans.length, 0);
 });
 
@@ -208,4 +213,47 @@ test('a budget buys the most whole leads it covers and reports the leftover', ()
   assert.equal(cartLib.leadsForBudget(400, 500).leadCount, 0);
   for (const bad of [0, -5, 1.5, NaN]) assert.equal(cartLib.leadsForBudget(bad, 500), null);
   assert.equal(cartLib.leadsForBudget(1000, 0), null);
+});
+
+test('paid orders record product, quantities, prices and the buyer email; Slack shows them', async () => {
+  const f = await paidCart('card');
+  f.payment.customer_email = 'buyer@lawfirm.example';
+  for (const line of f.payment.line_items) line.product_title = 'LOUDR Leads';
+  const o = orders.paidLeadOrder(f.payment, f.plans, 'biz_test', 'prod_test');
+  assert.equal(o.customerEmail, 'buyer@lawfirm.example');
+  assert.deepEqual(plain(o.product), { id: 'prod_test', name: 'LOUDR Leads' });
+  assert.equal(o.quantity, 18); assert.equal(o.orderTotalUsd, 7132.75);
+  const text = orders.slackOrderMessage(o).text;
+  assert.match(text, /Customer: buyer@lawfirm\.example\nProduct: LOUDR Leads\nStates:/);
+  assert.match(text, /Card fee: \$207\.75\nOrder total \(USD\): \$7,132\.75\nCheckout: Card\nPayment ID: pay_cart$/);
+  f.payment.customer_email = null;
+  assert.match(orders.slackOrderMessage(orders.paidLeadOrder(f.payment, f.plans, 'biz_test', 'prod_test')).text, /Customer: email not provided/);
+});
+
+test('checkout metadata names the product and each state quantity and price per lead', () => {
+  const cart = cartLib.calculateCartQuote([{ state: 'TX', quantity: 100 }, { state: 'AL', quantity: 50 }], undefined, 'card');
+  const m = cartLib.cartMetadata(cart, true);
+  assert.equal(m.product, 'LOUDR Leads'); assert.equal(m.quantity, '150'); assert.equal(m.items, 'TX:100@500,AL:50@325');
+  assert.equal(m.subtotal_amount, '66250'); assert.equal(m.payment_fee_amount, '1987.5'); assert.equal(m.total_amount, '68237.5');
+  assert.equal(m.pricing_mode, 'forced_usd');
+  assert(Object.keys(m).length <= 50 && Object.values(m).every((value) => typeof value === 'string' && value.length <= 500), 'fits Whop metadata limits');
+  const all = pricing.LEAD_STATES.filter((s) => s.price !== null).map((s) => ({ state: s.code, quantity: 1000 }));
+  const big = cartLib.cartMetadata(cartLib.calculateCartQuote(all, undefined, 'card'), true);
+  assert(Object.values(big).every((value) => value.length <= 500), 'a 49-state order still fits');
+});
+
+test('the webhook accepts multi-state receipts with more than two line items', async () => {
+  const f = await paidCart('card');
+  assert.equal(f.payment.line_items.length, 4);
+  let stored = null;
+  const route = load('app/api/webhooks/whop/route.ts', {
+    '@whop/sdk': { WhopClient: class { payments = { retrieve: async () => f.payment }; plans = { retrieve: async ({ id }) => f.plans.find((p) => p.id === id) }; } },
+    '@whop/sdk/helpers': { unwrapWebhook: () => ({ type: 'payment.succeeded', data: { id: f.payment.id } }) },
+    '@/lib/paid-lead-order': orders, '@/lib/lead-cart': cartLib,
+    '@/lib/paid-order-store': { recordPaidOrder: async (order) => { stored = order; } },
+    '@/lib/slack-order-delivery': { deliverSlackOrder: async () => 'sent' },
+  }, { process: { env: { WHOP_WEBHOOK_SECRET: 'test', WHOP_ACCOUNT_ID: 'biz_test', WHOP_LEADS_PRODUCT_ID: 'prod_test', WHOP_API_KEY: 'test' } }, console: { error: () => {} } });
+  const response = await route.POST(new Request('https://example.com/api/webhooks/whop', { method: 'POST', body: '{}' }));
+  assert.equal(response.status, 200);
+  assert.equal(stored.items.length, 3); assert.equal(stored.quantity, 18);
 });

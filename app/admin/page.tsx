@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import ThemeToggle from "@/components/ThemeToggle";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import Brand from "@/components/Brand";
@@ -21,6 +22,7 @@ export default async function AdminPage() {
         <div className="admin-header-actions">
           <a href="/" className="admin-entry-button">Back to checkout</a>
           <form action="/api/auth/logout" method="post"><button type="submit" className="admin-secondary">Sign out</button></form>
+          <ThemeToggle />
         </div>
       </header>
       <main id="state-pricing" className="admin-main">

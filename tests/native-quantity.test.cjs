@@ -31,7 +31,7 @@ test('native unit plans reuse across quantities; fees round once on the whole su
 test('paid receipts determine actual lead quantity and ignore buyer metadata and card fee quantity',async()=>{
  const f=await fixture();const o=orders.paidLeadOrder(f.payment,f.plans,'biz_test','prod_test');
  assert.equal(o.quantity,5);assert.equal(o.items[0].state,'AL');assert.equal(o.orderTotalUsd,1673.75);
- assert.match(orders.slackOrderMessage(o).text,/Leads: 5/);
+ assert.match(orders.slackOrderMessage(o).text,/5 leads × \$325\.00/);
  const bank=await fixture('bank');assert.equal(bank.checkout.items.length,1);assert.equal(orders.paidLeadOrder(bank.payment,bank.plans,'biz_test','prod_test').quantity,5);
 });
 test('receipt validation rejects altered/missing items, quantities, amounts, state and merchant',async()=>{
@@ -64,7 +64,7 @@ test('paid order snapshots survive retries and fail closed on inconsistent stora
 });
 test('webhook records native cart orders before Slack, and retains them when Slack is not configured',async()=>{
  const f=await fixture();let stored=0,delivered=0,failStore=false;const env={WHOP_WEBHOOK_SECRET:'test',WHOP_ACCOUNT_ID:'biz_test',WHOP_LEADS_PRODUCT_ID:'prod_test',WHOP_API_KEY:'test'};
- const route=load('app/api/webhooks/whop/route.ts',{'@whop/sdk':{WhopClient:class{payments={retrieve:async()=>f.payment};plans={retrieve:async({id})=>f.plans.find(p=>p.id===id)};}},'@whop/sdk/helpers':{unwrapWebhook:()=>({type:'payment.succeeded',data:{id:f.payment.id}})},'@/lib/paid-lead-order':orders,'@/lib/paid-order-store':{recordPaidOrder:async order=>{if(failStore)throw Error('offline');assert.equal(order.quantity,5);stored++;}},'@/lib/slack-order-delivery':{deliverSlackOrder:async()=>{assert(stored);delivered++;return 'sent';}}},{process:{env},console:{error:()=>{}}});
+ const route=load('app/api/webhooks/whop/route.ts',{'@/lib/lead-cart':cartLib,'@whop/sdk':{WhopClient:class{payments={retrieve:async()=>f.payment};plans={retrieve:async({id})=>f.plans.find(p=>p.id===id)};}},'@whop/sdk/helpers':{unwrapWebhook:()=>({type:'payment.succeeded',data:{id:f.payment.id}})},'@/lib/paid-lead-order':orders,'@/lib/paid-order-store':{recordPaidOrder:async order=>{if(failStore)throw Error('offline');assert.equal(order.quantity,5);stored++;}},'@/lib/slack-order-delivery':{deliverSlackOrder:async()=>{assert(stored);delivered++;return 'sent';}}},{process:{env},console:{error:()=>{}}});
  const req=()=>new Request('https://example.com/api/webhooks/whop',{method:'POST',body:'{}'});
  assert.equal((await (await route.POST(req())).json()).delivery,'not_configured');assert.equal(stored,1);assert.equal(delivered,0);
  env.SLACK_LEAD_ORDERS_WEBHOOK_URL='configured';assert.equal((await route.POST(req())).status,200);assert.equal(delivered,1);

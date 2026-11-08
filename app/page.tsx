@@ -1,5 +1,6 @@
 import Brand from "@/components/Brand";
 import TopUp from "@/components/TopUp";
+import ThemeToggle from "@/components/ThemeToggle";
 import "./admin/admin.css";
 
 export default function Home() {
@@ -11,6 +12,7 @@ export default function Home() {
         <nav className="site-header-actions" aria-label="Main navigation">
           <span className="header-note"><span className="status-dot" /> Client lead orders</span>
           <a className="admin-entry-button" href="/admin">Admin</a>
+          <ThemeToggle />
         </nav>
       </header>
 

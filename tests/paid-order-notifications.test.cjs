@@ -17,7 +17,7 @@ function fixture(){
 test('notification trusts historical merchant plan, not current rates or buyer metadata',()=>{
  const {plan,payment}=fixture();const order=orderLib.paidLeadOrder(payment,plan,'biz_test','prod_test');
  assert.equal(order.items[0].state,'TX');assert.equal(order.quantity,5);assert.equal(order.orderTotalUsd,2054);
- const text=orderLib.slackOrderMessage(order).text;assert.match(text,/Texas \(TX\)/);assert.match(text,/Leads: 5/);assert.match(text,/pay_test/);assert(!text.includes('999'));
+ const text=orderLib.slackOrderMessage(order).text;assert.match(text,/Texas \(TX\)/);assert.match(text,/5 leads × \$400\.00 = \$2,000\.00/);assert.match(text,/Order total \(USD\): \$2,054\.00/);assert.match(text,/pay_test/);assert(!text.includes('999'));
 });
 test('reject pending transfers, wrong merchant/product, and inconsistent plans',()=>{
  const {plan,payment}=fixture();
@@ -46,7 +46,7 @@ test('storage failure and foreign webhook URLs never post',async()=>{
 });
 test('webhook requires signature and succeeded event; delivery errors are retryable',async()=>{
  const {payment,plan}=fixture();let signed=true,type='payment.succeeded',failure=false,delivered=0;
- const route=load('app/api/webhooks/whop/route.ts',{'@whop/sdk':{WhopClient:class{payments={retrieve:async()=>payment};plans={retrieve:async()=>plan};}},'@whop/sdk/helpers':{unwrapWebhook:()=>{if(!signed)throw Error('signature');return {type,data:{id:payment.id}};}},'@/lib/paid-lead-order':orderLib,'@/lib/paid-order-store':{recordPaidOrder:async()=>{}},'@/lib/slack-order-delivery':{deliverSlackOrder:async()=>{if(failure)throw Error('offline');delivered++;return 'sent';}}},{process:{env:{WHOP_WEBHOOK_SECRET:'test',WHOP_ACCOUNT_ID:'biz_test',WHOP_LEADS_PRODUCT_ID:'prod_test',WHOP_API_KEY:'test',SLACK_LEAD_ORDERS_WEBHOOK_URL:'configured'}},console:{error:()=>{}}});
+ const route=load('app/api/webhooks/whop/route.ts',{'@/lib/lead-cart':cartLib,'@whop/sdk':{WhopClient:class{payments={retrieve:async()=>payment};plans={retrieve:async()=>plan};}},'@whop/sdk/helpers':{unwrapWebhook:()=>{if(!signed)throw Error('signature');return {type,data:{id:payment.id}};}},'@/lib/paid-lead-order':orderLib,'@/lib/paid-order-store':{recordPaidOrder:async()=>{}},'@/lib/slack-order-delivery':{deliverSlackOrder:async()=>{if(failure)throw Error('offline');delivered++;return 'sent';}}},{process:{env:{WHOP_WEBHOOK_SECRET:'test',WHOP_ACCOUNT_ID:'biz_test',WHOP_LEADS_PRODUCT_ID:'prod_test',WHOP_API_KEY:'test',SLACK_LEAD_ORDERS_WEBHOOK_URL:'configured'}},console:{error:()=>{}}});
  const req=()=>new Request('https://example.com/api/webhooks/whop',{method:'POST',body:'{}'});
  signed=false;assert.equal((await route.POST(req())).status,400);assert.equal(delivered,0);
  signed=true;type='payment.pending';assert.equal((await route.POST(req())).status,200);assert.equal(delivered,0);

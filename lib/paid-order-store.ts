@@ -4,7 +4,7 @@ import type { PaidLeadOrder } from "@/lib/paid-lead-order";
 export async function recordPaidOrder(order: PaidLeadOrder) {
   if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) throw new Error("Order storage unavailable.");
   const path = `orders/paid/${order.paymentId}.json`;
-  const content = JSON.stringify({ version: 2, ...order });
+  const content = JSON.stringify({ version: 3, ...order });
   try {
     await put(path, content, { access: "private", addRandomSuffix: false, allowOverwrite: false,
       contentType: "application/json", cacheControlMaxAge: 60, abortSignal: AbortSignal.timeout(5000) });

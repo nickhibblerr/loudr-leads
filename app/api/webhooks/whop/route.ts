@@ -1,6 +1,7 @@
 import { WhopClient } from "@whop/sdk";
 import { unwrapWebhook } from "@whop/sdk/helpers";
 import { paidLeadOrder, slackOrderMessage } from "@/lib/paid-lead-order";
+import { MAX_CART_STATES } from "@/lib/lead-cart";
 import { recordPaidOrder } from "@/lib/paid-order-store";
 import { deliverSlackOrder } from "@/lib/slack-order-delivery";
 
@@ -28,7 +29,8 @@ export async function POST(request: Request) {
     const lines = payment.line_items ?? [];
     if (payment.product_id !== productId && !lines.some((item) => item.product_id === productId)) return Response.json({ received: true, ignored: true });
     const ids = lines.length ? lines.map((item) => item.plan_id) : [payment.plan_id];
-    if (!ids.length || ids.length > 2 || ids.some((id) => !id)) throw new Error("Payment items unavailable.");
+    // One line per state plus an optional card fee line.
+    if (!ids.length || ids.length > MAX_CART_STATES + 1 || ids.some((id) => !id)) throw new Error("Payment items unavailable.");
     const plans = await Promise.all(ids.map((id) => whop.plans.retrieve({ id: id! })));
     const order = paidLeadOrder(payment, plans, accountId, productId);
     await recordPaidOrder(order);
