@@ -2,7 +2,7 @@ import type { Whop } from "@whop/sdk";
 import { calculateLeadQuote, LEAD_STATES } from "@/lib/lead-pricing";
 import { requestedPaymentMode } from "@/lib/payment-methods";
 import { isCardFeePlan, isPurchasedLeadPlan, LEAD_PRICING_MODEL } from "@/lib/lead-checkout";
-import { calculateCartQuote, MAX_CART_STATES } from "@/lib/lead-cart";
+import { calculateCartQuote, LEAD_PRODUCT_NAME, MAX_CART_STATES } from "@/lib/lead-cart";
 import { ACCEPTED_CARD_FEE_BASIS_POINTS, CARD_FEE_BASIS_POINTS } from "@/lib/payment-methods";
 import { isTopUpPlanForAmount } from "@/lib/whop-plans";
 
@@ -22,14 +22,24 @@ function legacyPaidLeadOrder(payment: Whop.Payment, plan: Whop.Plan, accountId: 
   if (m.payment_mode === "card" && !(ACCEPTED_CARD_FEE_BASIS_POINTS as readonly number[]).includes(recordedRate)) throw new Error("Unexpected card fee rate.");
   const quote = calculateLeadQuote(state.code, Number(m.quantity), [{ ...state, price: Number(m.price_per_lead) }], requestedPaymentMode(m.payment_mode), recordedRate);
   if (!isTopUpPlanForAmount(plan, accountId, productId, quote, m.pricing_mode === "forced_usd")) throw new Error("Plan does not match order.");
-  return paidOrder(payment.id, [{ state: quote.state, stateName: quote.stateName, quantity: quote.leadCount }], quote.total, quote.paymentMode);
+  return paidOrder(payment, productId, [{ state: quote.state, stateName: quote.stateName, quantity: quote.leadCount, pricePerLead: quote.unitPrice, subtotalUsd: quote.amount }],
+    quote.fee, quote.total, quote.paymentMode);
 }
 
-export type PaidOrderItem = { state: string; stateName: string; quantity: number };
-export type PaidLeadOrder = { paymentId: string; items: PaidOrderItem[]; quantity: number; orderTotalUsd: number; paymentMode: "bank" | "card" };
+export type PaidOrderItem = { state: string; stateName: string; quantity: number; pricePerLead: number; subtotalUsd: number };
+/** A verified paid order: what was bought, by whom, and what it cost (USD). */
+export type PaidLeadOrder = {
+  paymentId: string; product: { id: string; name: string }; customerEmail: string | null;
+  items: PaidOrderItem[]; quantity: number; leadSubtotalUsd: number; cardFeeUsd: number; orderTotalUsd: number; paymentMode: "bank" | "card";
+};
 
-function paidOrder(paymentId: string, items: PaidOrderItem[], orderTotalUsd: number, paymentMode: "bank" | "card"): PaidLeadOrder {
-  return { paymentId, items, quantity: items.reduce((sum, item) => sum + item.quantity, 0), orderTotalUsd, paymentMode };
+function paidOrder(payment: Whop.Payment, productId: string, items: PaidOrderItem[], cardFeeUsd: number, orderTotalUsd: number, paymentMode: "bank" | "card"): PaidLeadOrder {
+  const line = payment.line_items?.find((item) => item.product_id === productId);
+  // The buyer's email is collected by Whop at checkout and read from the payment.
+  const email = typeof payment.customer_email === "string" && /^[^\s@]+@[^\s@]+$/.test(payment.customer_email) ? payment.customer_email : null;
+  const cents = items.reduce((sum, item) => sum + Math.round(item.subtotalUsd * 100), 0);
+  return { paymentId: payment.id, product: { id: productId, name: line?.product_title || LEAD_PRODUCT_NAME }, customerEmail: email,
+    items, quantity: items.reduce((sum, item) => sum + item.quantity, 0), leadSubtotalUsd: cents / 100, cardFeeUsd, orderTotalUsd, paymentMode };
 }
 
 const MONEY = /^\d+(?:\.\d+)?$/;
@@ -105,13 +115,26 @@ export function paidLeadOrder(payment: Whop.Payment, purchasedPlans: Whop.Plan |
   const usdTotal = (payment as { usd_total?: { currency?: string; amount?: string } | null }).usd_total;
   const orderTotalUsd = localCurrency && usdTotal?.currency === "usd" && typeof usdTotal.amount === "string" && MONEY.test(usdTotal.amount)
     ? Math.round(Number(usdTotal.amount) * 100) / 100 : cart.total;
-  return paidOrder(payment.id, cart.lines.map((line) => ({ state: line.state, stateName: line.stateName, quantity: line.leadCount })), orderTotalUsd, cart.paymentMode);
+  return paidOrder(payment, productId, cart.lines.map((line) => ({ state: line.state, stateName: line.stateName, quantity: line.leadCount, pricePerLead: line.unitPrice, subtotalUsd: line.amount })),
+    cart.fee, orderTotalUsd, cart.paymentMode);
 }
 
+const usd = (amount: number) => `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export function slackOrderMessage(order: PaidLeadOrder) {
-  const states = order.items.length === 1
-    ? `State: ${order.items[0].stateName} (${order.items[0].state})\nLeads: ${order.items[0].quantity}`
-    : `States:\n${order.items.map((item) => `• ${item.stateName} (${item.state}): ${item.quantity} ${item.quantity === 1 ? "lead" : "leads"}`).join("\n")}\nTotal leads: ${order.quantity}`;
-  return { text: `Paid LOUDR lead order\n${states}\nOrder total (USD): $${order.orderTotalUsd.toFixed(2)}\nCheckout: ${order.paymentMode === "card" ? "Card" : "Wire"}\nPayment ID: ${order.paymentId}`,
-    unfurl_links: false, unfurl_media: false };
+  const lines = order.items.map((item) => `• ${item.stateName} (${item.state}): ${item.quantity.toLocaleString("en-US")} ${item.quantity === 1 ? "lead" : "leads"} × ${usd(item.pricePerLead)} = ${usd(item.subtotalUsd)}`);
+  const text = [
+    "Paid LOUDR lead order",
+    `Customer: ${order.customerEmail ?? "email not provided"}`,
+    `Product: ${order.product.name}`,
+    order.items.length === 1 ? "State:" : "States:",
+    ...lines,
+    `Total leads: ${order.quantity.toLocaleString("en-US")}`,
+    `Lead subtotal: ${usd(order.leadSubtotalUsd)}`,
+    ...(order.paymentMode === "card" ? [`Card fee: ${usd(order.cardFeeUsd)}`] : []),
+    `Order total (USD): ${usd(order.orderTotalUsd)}`,
+    `Checkout: ${order.paymentMode === "card" ? "Card" : "Wire"}`,
+    `Payment ID: ${order.paymentId}`,
+  ].join("\n");
+  return { text, unfurl_links: false, unfurl_media: false };
 }

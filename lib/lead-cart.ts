@@ -55,13 +55,20 @@ export function cartKey(cart: CartQuote): string {
   return `${cart.paymentMode}:${cart.lines.map((line) => `${line.state}x${line.leadCount}@${line.unitPrice}`).join(",")}:${cart.totalCents}`;
 }
 
-/** Descriptive checkout metadata. It is never used to verify or fulfill an order. */
+export const LEAD_PRODUCT_NAME = "LOUDR Leads";
+
+/**
+ * Checkout metadata Whop stores on the payment, so each purchase shows its product,
+ * quantities and prices. Descriptive only: orders are verified from the receipt, never
+ * from metadata. `items` lists each state as STATE:quantity@price-per-lead.
+ */
 export function cartMetadata(cart: CartQuote, forceUsd = false): Record<string, string> {
-  const items = cart.lines.map((line) => `${line.state}:${line.leadCount}`).join(",");
-  return { source: "loudr-leads-site", currency: cart.currency, payment_mode: cart.paymentMode,
+  const items = cart.lines.map((line) => `${line.state}:${line.leadCount}@${line.unitPrice}`).join(",");
+  return { source: "loudr-leads-site", product: LEAD_PRODUCT_NAME, currency: cart.currency, payment_mode: cart.paymentMode,
     pricing_mode: effectiveForceUsd(cart.paymentMode, forceUsd) ? "forced_usd" : "adaptive",
     state_count: String(cart.lines.length), quantity: String(cart.leadCount),
-    ...(items.length <= 400 ? { items } : {}),
+    // Whop allows 500 characters per value; very large orders keep the totals only.
+    ...(items.length <= 480 ? { items } : {}),
     ...(cart.lines.length === 1 ? { state: cart.lines[0].state, state_name: cart.lines[0].stateName, price_per_lead: String(cart.lines[0].unitPrice) } : {}),
     subtotal_amount: String(cart.amount), payment_fee_percent: String(cart.feePercent), payment_fee_amount: String(cart.fee),
     total_amount: String(cart.total) };
