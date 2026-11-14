@@ -22,7 +22,19 @@ async function isTeamMember(apiKey: string, businessId: string, userId: string):
   return member;
 }
 
+/**
+ * Local testing only: `LOCAL_DEV_SIGN_IN=1` with `next dev` skips Whop sign-in so Team and
+ * Admin can be tried on localhost. Production builds (NODE_ENV=production, which includes
+ * Vercel previews) never honour it.
+ */
+function localDevSignIn(): boolean {
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL || process.env.LOCAL_DEV_SIGN_IN !== "1") return false;
+  try { return ["localhost", "127.0.0.1"].includes(new URL(process.env.NEXT_PUBLIC_SITE_URL || "").hostname); }
+  catch { return false; }
+}
+
 export async function getAdminAccess(cookieHeader: string | null): Promise<AdminAccess> {
+  if (localDevSignIn()) return { status: "authorized", userId: "user_localdev", name: process.env.LOCAL_DEV_NAME || "Local tester" };
   if (!authConfigured()) return { status: "unavailable" };
   const session = await readAdminSession(cookieHeader);
   if (!session) return { status: "unauthenticated" };
@@ -46,7 +58,7 @@ export async function requireAdmin(request: Request, area: "admin" | "team tools
 
 export function checkMutationOrigin(request: Request, message = "Save prices from this site's admin page."): Response | null {
   let siteOrigin: string;
-  try { siteOrigin = getAuthConfig().siteOrigin; }
+  try { siteOrigin = localDevSignIn() ? new URL(process.env.NEXT_PUBLIC_SITE_URL!).origin : getAuthConfig().siteOrigin; }
   catch { return Response.json({ error: "Admin access is temporarily unavailable." }, { status: 503, headers: { "Cache-Control": "no-store" } }); }
   const origin = request.headers.get("origin");
   const contentType = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();

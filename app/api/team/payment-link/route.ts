@@ -28,8 +28,16 @@ export async function POST(request: Request) {
 
   const token = process.env.WHOP_API_KEY;
   const accountId = process.env.WHOP_ACCOUNT_ID;
-  if (!token || !accountId) return failure("Payment links are temporarily unavailable. Please try again later.", 503);
   const linkId = `link_${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
+  if (!token || !accountId) {
+    // Local testing without a Whop key (see LOCAL_DEV_SIGN_IN): return an obviously fake link.
+    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL && process.env.LOCAL_DEV_SIGN_IN === "1") {
+      const planId = `plan_LOCALMOCK${randomBytes(4).toString("hex")}`;
+      return Response.json({ linkId, url: `https://whop.com/checkout/${planId}`, planId, paymentMode: cart.paymentMode, cart, priceVersion: priced.card.version,
+        summary: { ...orderText(cart), total: money(cart.total) }, createdAt: new Date().toISOString(), mock: true }, { headers: noStore });
+    }
+    return failure("Payment links are temporarily unavailable. Please try again later.", 503);
+  }
   try {
     const whop = new WhopClient({ token });
     const result = await whop.checkoutConfigurations.create(

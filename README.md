@@ -14,6 +14,19 @@ npm run build
 
 Open `http://localhost:3000`. Without payment environment variables, state selection, quantities, prices and guidance work; the payment step displays a setup message.
 
+## Testing the Team page locally
+
+Whop sign-in only works on the production URL, so local runs use a sign-in bypass that works only with `next dev` on localhost (never in production builds or on Vercel). Create `.env.local`:
+
+```sh
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+LOCAL_DEV_SIGN_IN=1
+N8N_PROPOSAL_WEBHOOK_URL=http://localhost:5679/webhook/loudr-website-proposal
+N8N_PROPOSAL_WEBHOOK_SECRET=local-test-secret-0123456789
+```
+
+Then run the mock n8n in one terminal (`node integrations/n8n/mock-webhook.mjs`; it prints each proposal and sends nothing anywhere) and `npm run dev` in another. Open `http://localhost:3000/team`. Without `WHOP_API_KEY`/`WHOP_ACCOUNT_ID`, **Generate link** returns fake `plan_LOCALMOCK…` links; add the real values to create real (unpaid) Whop links. `MOCK_FAIL=1` makes the mock answer "not sent" to see the error path.
+
 ## Lead pricing and guidance
 
 `lib/lead-pricing.ts` contains the initial rate card for all 50 states; saved admin prices and availability override it. California starts sold out. Presets are 1, 5, 10, 15 and 25 leads; custom whole-number quantities from 1 through 1,000 are supported. Guidance starts after a quantity is entered and progresses to green at 50 leads. It describes opportunity, not a promised conversion rate.
