@@ -21,6 +21,7 @@ export default async function AdminPage() {
         <Brand />
         <div className="admin-header-actions">
           <a href="/" className="admin-entry-button">Back to checkout</a>
+          <a href="/team" className="admin-entry-button">Team</a>
           <form action="/api/auth/logout" method="post"><button type="submit" className="admin-secondary">Sign out</button></form>
           <ThemeToggle />
         </div>

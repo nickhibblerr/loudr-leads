@@ -1,0 +1,1783 @@
+{
+  "name": "Loudr | Website proposals + Whop payments",
+  "nodes": [
+    {
+      "name": "Work out total",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "onError": "continueErrorOutput",
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Reads the proposal sent by the Loudr website (Team page → Send Proposal).\n// The website priced the order from its saved rate card; this checks the numbers and\n// formats them into the same fields the original proposal form produced.\nconst body = $('Loudr website').first().json.body || {};\nif (body.event !== 'loudr.proposal.send' || body.version !== 1) throw new Error('Unsupported website request. Re-import this workflow from the Loudr site repo.');\nconst reps = $('Proposal settings').first().json.config.reps;\nconst rep = String((body.rep || {}).name || '');\nif (!reps[rep]) throw new Error('Rep \"' + rep + '\" is not in the reps map in Proposal settings');\nconst c = body.client || {}, o = body.order || {};\nconst rows = Array.isArray(o.states) ? o.states : [];\nif (!rows.length || rows.length > 49) throw new Error('The order has no states');\nconst cents = (n, what) => { const v = Math.round(Number(n) * 100); if (!Number.isSafeInteger(v) || v <= 0 || Math.abs(Number(n) * 100 - v) > 1e-6) throw new Error('Invalid ' + what + ': ' + n); return v; };\nconst lines = rows.map(r => {\n  const st = String(r.name || r.code || '').trim();\n  const leads = Number(r.leads);\n  if (!st || !Number.isSafeInteger(leads) || leads < 1) throw new Error('Invalid lead count for ' + st);\n  const bankCents = cents(r.wire_price_per_lead, st + ' price per lead');\n  // Card price per lead is shown 3% above wire, as before; the card total below is the website's.\n  return {st, leads, bankCents, cardCents: Math.round(bankCents * 103 / 100)};\n});\nconst states = lines.map(l => l.st);\nconst multi = lines.length > 1;\nconst bankTotalCents = cents(o.wire_total, 'wire total');\nconst cardTotalCents = cents(o.card_total, 'card total');\nconst feePercent = Number(o.card_fee_percent);\nif (lines.reduce((a, l) => a + l.leads * l.bankCents, 0) !== bankTotalCents) throw new Error('Wire total does not add up from the states');\nif (!(feePercent >= 0 && feePercent < 20) || cardTotalCents !== bankTotalCents + Math.round(bankTotalCents * feePercent / 100)) throw new Error('Card total does not match the wire total plus the card fee');\nconst money = n => '$' + n.toLocaleString('en-US', {minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2});\nconst leadCount = lines.reduce((a, l) => a + l.leads, 0);\nconst totalNumber = cardTotalCents / 100;\nconst bankTotalNumber = bankTotalCents / 100;\nconst leadsText = multi ? leadCount + '\\n' + lines.map(l => l.st + ': ' + l.leads).join('\\n') + '\\n' : String(leadCount);\nconst perLead = k => multi ? '\\n' + lines.map(l => l.st + ': ' + money(l[k] / 100)).join('\\n') + '\\n' : money(lines[0][k] / 100);\nconst leadsLine = multi ? leadCount + ' (' + lines.map(l => l.st + ' ' + l.leads).join(', ') + ')' : String(leadCount);\nconst perLeadLine = k => multi ? lines.map(l => l.st + ' ' + money(l[k] / 100)).join(', ') : money(lines[0][k] / 100);\nconst email = String(c.email || '').trim().toLowerCase();\nif (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) throw new Error('Client email is missing');\nconst firstName = String(c.first_name || '').trim(), firm = String(c.firm || '').trim();\nif (!firstName || !firm) throw new Error('Client first name and law firm are required');\nreturn [{json: {\n  userId: reps[rep], rep,\n  firstName, lastName: String(c.last_name || '').trim(), email,\n  phone: String(c.phone || '').trim(), firm, state: states.join(', '),\n  leads: leadsText, leadCount: String(leadCount), cpl: perLead('bankCents'), bankCpl: perLead('bankCents'),\n  leadsLine, cplLine: perLeadLine('cardCents'), bankCplLine: perLeadLine('bankCents'), total: money(totalNumber), totalNumber,\n  bankTotal: money(bankTotalNumber), bankTotalNumber,\n  date: DateTime.now().setZone('America/Los_Angeles').toFormat('MMMM d, yyyy'),\n  proposalId: String(body.proposal_id || ''),\n}}];\n"
+      },
+      "id": "b283787b-ce0f-49b5-83d8-ae084a7cb879"
+    },
+    {
+      "name": "Save on GHL contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1150,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/contacts/upsert",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ locationId: $('Proposal settings').first().json.config.ghlLocationId, firstName: $json.firstName, lastName: $json.lastName, email: $json.email, phone: $json.phone || undefined, companyName: $json.firm, customFields: [{ id: $('Proposal settings').first().json.config.fields.leads, field_value: $json.leads }, { id: $('Proposal settings').first().json.config.fields.costPerLead, field_value: $json.cpl }, { id: $('Proposal settings').first().json.config.fields.state, field_value: $json.state }, { id: $('Proposal settings').first().json.config.fields.proposalDate, field_value: $json.date }, { id: $('Proposal settings').first().json.config.fields.firm, field_value: $json.firm }] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "11757c4a-bb58-4abd-9382-2d1209feebff"
+    },
+    {
+      "name": "Read old links",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1380,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/' + $('Save on GHL contact').first().json.contact.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": false,
+        "specifyBody": "json",
+        "jsonBody": "",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "f1fed338-d813-4c26-89d3-f600e0b6849b"
+    },
+    {
+      "name": "Whop card link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1610,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Proposal settings').first().json.config.whopApiBase + '/checkout_configurations' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Api-Version-Date",
+              "value": "={{ $('Proposal settings').first().json.config.whopApiVersion }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'proposal-' + $execution.id + '-card' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const t = $('Work out total').first().json; return JSON.stringify({ mode: 'payment', account_id: $('Proposal settings').first().json.config.whopAccountId, metadata: { source: $('Proposal settings').first().json.config.source, pay_method: 'card', ghl_contact_id: $('Save on GHL contact').first().json.contact.id, firm: t.firm, rep: t.rep, email: t.email, leads: t.leadsLine, cpl: t.cplLine, total: t.total, state: t.state, proposal_id: t.proposalId }, variant: { title: (t.leadCount + ' MVA Leads Card').slice(0, 30), billing_type: 'one_time', initial_price: t.totalNumber, currency: 'usd', visibility: 'hidden', adaptive_pricing_enabled: false, stock: 1, unlimited_stock: false, force_create_new_plan: true, payment_method_configuration: { enabled: [\"card\", \"apple_pay\", \"google_pay\"], disabled: [], include_platform_defaults: false } } }); })() }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Whop API key"
+        }
+      },
+      "id": "c79b93d6-f5d1-4b0a-ae35-a8e706591b7c"
+    },
+    {
+      "name": "Whop bank link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1840,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Proposal settings').first().json.config.whopApiBase + '/checkout_configurations' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Api-Version-Date",
+              "value": "={{ $('Proposal settings').first().json.config.whopApiVersion }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'proposal-' + $execution.id + '-wire' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const t = $('Work out total').first().json; return JSON.stringify({ mode: 'payment', account_id: $('Proposal settings').first().json.config.whopAccountId, metadata: { source: $('Proposal settings').first().json.config.source, pay_method: 'wire', ghl_contact_id: $('Save on GHL contact').first().json.contact.id, firm: t.firm, rep: t.rep, email: t.email, leads: t.leadsLine, cpl: t.bankCplLine, total: t.bankTotal, state: t.state, proposal_id: t.proposalId }, variant: { title: (t.leadCount + ' MVA Leads Wire').slice(0, 30), billing_type: 'one_time', initial_price: t.bankTotalNumber, currency: 'usd', visibility: 'hidden', adaptive_pricing_enabled: false, unlimited_stock: true, force_create_new_plan: true, payment_method_configuration: { enabled: [\"bank_wire\"], disabled: [], include_platform_defaults: false } } }); })() }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Whop API key"
+        }
+      },
+      "id": "8e98b1a1-c18b-460f-9fe0-97bc6ded5bf7"
+    },
+    {
+      "name": "Check links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "onError": "continueErrorOutput",
+      "position": [
+        2070,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\nconst t = $('Work out total').first().json;\nconst check = (node, want, method) => {\n  const r = $(node).first().json;\n  const url = String(r.purchase_url || '');\n  if (!/^https:\\/\\/whop\\.com\\/checkout\\/[A-Za-z0-9_-]+\\/?$/.test(url)) throw new Error(node + ': Whop did not return a usable payment link');\n  const v = r.variant || {};\n  if (!(Math.abs(Number(v.initial_price) - want) <= 0.001)) throw new Error(node + ': price ' + v.initial_price + ' does not match total ' + want);\n  if (v.currency !== 'usd' || v.billing_type !== 'one_time' || v.visibility !== 'hidden') throw new Error(node + ': wrong currency, billing type or visibility');\n  const on = (r.effective_payment_method_configuration || {}).enabled || [];\n  const allowed = method === 'card' ? ['card', 'apple_pay', 'google_pay'] : ['bank_wire'];\n  if (!on.includes(method) || on.some(m => !allowed.includes(m))) throw new Error(node + ': wrong payment methods ' + on.join(','));\n  if (!/^plan_/.test(String(v.id || ''))) throw new Error(node + ': no plan id, so the link could not be shut off later');\n  return { url, plan: v.id };\n};\nconst card = check('Whop card link', t.totalNumber, 'card');\nconst bank = check('Whop bank link', t.bankTotalNumber, 'bank_wire');\nif (card.plan === bank.plan || card.url === bank.url) throw new Error('Whop returned the same link for card and wire');\nreturn [{ json: { cardUrl: card.url, bankUrl: bank.url, plans: card.plan + ',' + bank.plan } }];"
+      },
+      "id": "e3ac1bac-4d10-4229-ad09-070735b1d99a"
+    },
+    {
+      "name": "Save pay link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        2300,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/' + $('Save on GHL contact').first().json.contact.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ customFields: [{ id: $('Proposal settings').first().json.config.fields.cardUrl, field_value: $json.cardUrl }, { id: $('Proposal settings').first().json.config.fields.bankUrl, field_value: $json.bankUrl }, { id: $('Proposal settings').first().json.config.fields.planIds, field_value: $json.plans }, { id: $('Proposal settings').first().json.config.fields.bankTotal, field_value: $('Work out total').first().json.bankTotal }, { id: $('Proposal settings').first().json.config.fields.cardTotal, field_value: $('Work out total').first().json.total }, { id: $('Proposal settings').first().json.config.fields.rep, field_value: $('Work out total').first().json.rep }] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "bacc9555-53ba-400c-b5f8-e3452b5c851b"
+    },
+    {
+      "name": "Send proposal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        2530,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/proposals/templates/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "v3"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ templateId: $('Proposal settings').first().json.config.proposalTemplateId, userId: $('Work out total').first().json.userId, locationId: $('Proposal settings').first().json.config.ghlLocationId, contactId: $('Save on GHL contact').first().json.contact.id, sendDocument: true }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "289fc567-c4d5-430b-b2dd-f3f98f4ecb5c"
+    },
+    {
+      "name": "Old plan IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2760,
+        -230
+      ],
+      "parameters": {
+        "jsCode": "\nconst c = $('Read old links').first().json.contact || {};\nconst old = String(((c.customFields || []).find(f => f.id === $('Proposal settings').first().json.config.fields.planIds) || {}).value || '');\nconst fromSite = ($('Loudr website').first().json.body || {}).retire_plan_ids || [];\nconst keep = String($('Check links').first().json.plans).split(',');  // never shut off the links just made\nconst ids = [...old.split(','), ...(Array.isArray(fromSite) ? fromSite : [])].map(s => String(s).trim());\nreturn [...new Set(ids)].filter(s => /^plan_[A-Za-z0-9]+$/.test(s) && !keep.includes(s)).map(id => ({ json: { id } }));\n"
+      },
+      "id": "d1ec8c9f-4512-41fd-8420-01499ca6bd49"
+    },
+    {
+      "name": "Retire old link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        2990,
+        -230
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Proposal settings').first().json.config.whopApiBase + '/variants/' + $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Api-Version-Date",
+              "value": "={{ $('Proposal settings').first().json.config.whopApiVersion }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"stock\": 0, \"unlimited_stock\": false}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Whop API key"
+        }
+      },
+      "id": "6394f94a-64d7-420a-a451-057bcb8358c6"
+    },
+    {
+      "name": "Tell Jordan (old link)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [
+        3220,
+        -230
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {},
+        "jsonBody": "={{ JSON.stringify({ channel: $('Proposal settings').first().json.config.jordanSlackId, text: 'Proposal form: an older Whop link could not be shut off for ' + $('Work out total').first().json.email + '. It can still be paid. Check n8n.' }) }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack bot"
+        }
+      },
+      "id": "a8b77d95-ceed-4cf0-bed1-caa2317efed2"
+    },
+    {
+      "name": "Sent",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2990,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ (() => {\n  const t = $('Work out total').first().json;\n  const links = $('Check links').first().json;\n  const ref = (($json.links || [])[0] || {}).referenceId;\n  return { sent: true, proposal_id: t.proposalId, email: t.email,\n    signing_url: ref ? 'https://sendlink.co/documents/v1/' + ref + '?locale=en-US' : null,\n    card_url: links.cardUrl, wire_url: links.bankUrl, card_total: t.total, wire_total: t.bankTotal, plan_ids: links.plans };\n})() }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "f6fdaa4e-4333-4d8d-a0e1-e12bfaab8d1f"
+    },
+    {
+      "name": "Not sent",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2990,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ (() => {\n  const e = $json.error;\n  const why = typeof e === 'string' ? e : (e && (e.description || e.message)) || $json.message || 'GHL did not confirm the proposal was sent.';\n  return { sent: false, error: 'Proposal NOT sent: ' + String(why).slice(0, 240) + ' Payment links may already exist; check this n8n execution and GHL before retrying.',\n    proposal_id: ($('Loudr website').first().json.body || {}).proposal_id || null };\n})() }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "4069d541-e721-4eab-9b95-d41b7d1a7aca"
+    },
+    {
+      "name": "Proposal settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        230,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Existing account values from Jordan's source files. Confirm once before publishing.\nconst config = {\n  \"whopAccountId\": \"biz_HqBscEcuZxTgaf\",\n  \"whopApiBase\": \"https://api.whop.com/api/v1\",\n  \"whopApiVersion\": \"2026-10-27-2\",\n  \"source\": \"loudr-proposal-form\",\n  \"ghlLocationId\": \"gktSV83MhR3ONlsXR8E1\",\n  \"proposalTemplateId\": \"6ada95791e0a127d470a4671\",\n  \"salesChannelId\": \"C0CF61DBWAH\",\n  \"jordanSlackId\": \"U0C88NE4J01\",\n  \"reps\": {\n    \"Mason Church\": \"ivzu8RKbHlsOSOpIL75b\",\n    \"Jeremiah Iroff\": \"gnMespB8q9aIoKCdDQph\",\n    \"Bernardo Morales\": \"qxEHLNyaWd25HuOCVf21\"\n  },\n  \"fields\": {\n    \"leads\": \"JtC2OhwuyKEFcg3gRdMQ\",\n    \"costPerLead\": \"nRtSRFKX3QvzKnsIWVe0\",\n    \"state\": \"o3cPFq2wGsmg3uorv1fP\",\n    \"proposalDate\": \"Dttay90n1wvNTWv3SM1Q\",\n    \"firm\": \"OxQJUsmrUrDKsXLic5RO\",\n    \"cardUrl\": \"tBRdg5MX3J3OkZHlwV2K\",\n    \"bankUrl\": \"l1R4GFJqW505zK5HC9UZ\",\n    \"planIds\": \"MBbp3XDQyJm8i3wpdELD\",\n    \"bankTotal\": \"2dwbWrBDi16AH5ONeOI6\",\n    \"cardTotal\": \"kY52Raw2ixfXJtvSfJaV\",\n    \"rep\": \"L0pgltngVX8eSSh9jt2W\"\n  }\n};\nreturn $input.all().map(item => ({json: {...item.json, config}, ...(item.binary ? {binary:item.binary} : {})}));"
+      },
+      "id": "c9fde05b-0f49-4f8b-af36-86f604fbe0d7"
+    },
+    {
+      "name": "Proposal sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2760,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b88cdea3-ffa3-4511-ae37-d45a1719d659",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "50ba66ab-7078-4009-81cf-b5a878911116"
+    },
+    {
+      "name": "Whop payment",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        1450
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whop-proposal-paid",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "350cc691-1143-4aa6-8415-54319f67857f",
+      "webhookId": "0ca609cf-952f-4468-a558-929c97c9a0c6"
+    },
+    {
+      "name": "Read body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "onError": "continueErrorOutput",
+      "position": [
+        220,
+        1450
+      ],
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst h = item.json.headers || {};\nreturn [{json:{base:`${h['webhook-id']}.${h['webhook-timestamp']}.${raw}`, sig:h['webhook-signature'] || '', ts:Number(h['webhook-timestamp']), raw}}];"
+      },
+      "id": "2ff770c4-6b39-4d77-aec4-4805fba6024f"
+    },
+    {
+      "name": "Sign",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "onError": "continueErrorOutput",
+      "position": [
+        440,
+        1450
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.base }}",
+        "dataPropertyName": "expected",
+        "secret": "PASTE_YOUR_WHOP_WEBHOOK_SECRET_HERE",
+        "encoding": "base64"
+      },
+      "id": "2668b2be-3f75-4607-9b9f-a7615bd3d6c0",
+      "notes": "Paste the complete Whop ws_ signing secret exactly as provided. Do not remove the prefix. Crypto v1 uses the secret as UTF-8.",
+      "notesInFlow": true
+    },
+    {
+      "name": "Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "onError": "continueErrorOutput",
+      "position": [
+        660,
+        1450
+      ],
+      "parameters": {
+        "jsCode": "const j = $input.first().json;\nconst cfg = $('Payment settings').first().json.config;\nconst same = (a,b) => { a=String(a); b=String(b); if(a.length!==b.length) return false; let v=0; for(let i=0;i<a.length;i++) v |= a.charCodeAt(i)^b.charCodeAt(i); return v===0; };\nconst sigs = String(j.sig).split(/\\s+/).filter(s=>s.startsWith('v1,')).map(s=>s.slice(3));\nif (!Number.isFinite(j.ts) || Math.abs(Date.now()/1000-j.ts)>300 || !sigs.some(s=>same(s,j.expected))) return [{json:{genuine:false,why:'Invalid signature or timestamp'}}];\nconst e = JSON.parse(j.raw), p = e.data || {}, m = p.metadata || {};\nif ((e.account_id || e.company_id) !== cfg.whopAccountId) return [{json:{genuine:false,why:'Wrong Whop account'}}];\nconst sd = $getWorkflowStaticData('global');\nsd.seen = sd.seen || [];\nconst key = e.type + ':' + p.id;\nconst duplicate = !!p.id && sd.seen.includes(key);\nconst esc = v => String(v ?? '').slice(0,500).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst money = n => '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});\nconst rawPaid = p.usd_total ?? (p.currency === 'usd' ? p.total : null);\nconst paid = rawPaid == null ? NaN : Number(rawPaid);\nconst asked = Number(String(m.total || '').replace(/[$,]/g,''));\nconst paidText = Number.isFinite(paid) ? money(paid) : 'unknown USD amount';\nconst amountMatches = Number.isFinite(paid) && Number.isFinite(asked) && asked > 0 && Math.abs(paid-asked)<0.01;\nconst isProposal = e.type === 'payment.succeeded' && m.source === cfg.source && !!m.ghl_contact_id && !!p.id;\nconst isDeposit = e.type === 'deposit.succeeded' && p.line_type === 'topup' && !!p.id;\nconst act = !duplicate && isProposal && amountMatches;\nconst wire = !duplicate && (isDeposit || (e.type === 'payment.succeeded' && !!p.id && !act));\nconst u = p.user || {};\nconst matchText = isDeposit\n ? ':bank: Whop bank deposit '+(p.usd_amount == null ? '(amount unavailable)' : esc(money(Number(p.usd_amount))))+'. Deposit '+esc(p.id)+'. Match the sender and proposal manually before updating GHL.'\n : ':mag: Whop payment '+esc(p.id)+': '+paidText+'. Payer: '+[esc(u.name),esc(u.email)].filter(Boolean).join(', ')+'. '+(isProposal && !amountMatches ? 'Proposal amount could not be matched ('+esc(m.total)+').' : 'No matching proposal metadata.')+' Review before marking a proposal paid.';\nreturn [{json:{...m, genuine:true, act, wire, duplicate, dedupeKey:key, type:e.type, paymentId:p.id,\n variantId:p.variant_id || p.variant?.id || p.plan?.id || '', paidText, how:' by '+esc(p.payment_method_type || m.pay_method || 'unknown method'),\n firm:esc(m.firm || 'a client'),rep:esc(m.rep),email:esc(m.email),leads:esc(m.leads),cpl:esc(m.cpl),state:esc(m.state),warn:'',matchText}}];"
+      },
+      "id": "bfeaa335-2374-41b3-86e9-fcb7eceb7772"
+    },
+    {
+      "name": "Genuine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1450
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "65f562b8-368a-47a5-b9cb-8e198f3229d1",
+              "leftValue": "={{ $json.genuine }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a6cc869b-a488-443a-acd4-0a03f3084e42"
+    },
+    {
+      "name": "OK to Whop",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1350
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "60a6c0e9-3e4f-4d33-832b-46d0e15dc5a7"
+    },
+    {
+      "name": "Proposal payment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        1350
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ff8f1b8a-b4e7-4753-a924-882b5c03b8b6",
+              "leftValue": "={{ $('Check').first().json.act }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ff78fed6-9215-4b11-abff-c8efb441b52e"
+    },
+    {
+      "name": "Clear old tag",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1430,
+        1250
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/' + $('Check').first().json.ghl_contact_id + '/tags' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"tags\": [\"proposal paid\"]}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "c9c89d55-c165-4d94-b47c-c7f6033d76f9"
+    },
+    {
+      "name": "Tag contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1540,
+        1250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/' + $('Check').first().json.ghl_contact_id + '/tags' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"tags\": [\"proposal paid\"]}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "7976cd8e-4acc-45c6-9e5a-d1b23e484e70"
+    },
+    {
+      "name": "Note on contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1760,
+        1250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/' + $('Check').first().json.ghl_contact_id + '/notes' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: 'Whop proposal payment received: ' + $('Check').first().json.paidText + ' for ' + $('Check').first().json.leads + ' leads. Whop payment ' + $('Check').first().json.paymentId + $('Check').first().json.warn }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "0f4e976b-632b-4e64-af1b-5e77b241fd0b"
+    },
+    {
+      "name": "Post to sales team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1980,
+        1250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Payment settings').first().json.config.salesChannelId, text: ':moneybag: Proposal paid: ' + $('Check').first().json.firm + ' paid ' + $('Check').first().json.paidText + $('Check').first().json.how + ' for ' + $('Check').first().json.leads + ' leads at ' + $('Check').first().json.cpl + ' (' + $('Check').first().json.state + '). Rep: ' + $('Check').first().json.rep + '. Client email: ' + $('Check').first().json.email + $('Check').first().json.warn }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack bot"
+        }
+      },
+      "id": "449b3541-1aff-427e-8c0d-2dad9af81eaa"
+    },
+    {
+      "name": "Posted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        1250
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b88cdea3-ffa3-4511-ae37-d45a1719d659",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00289178-c131-4fd7-bced-175b4ac75499"
+    },
+    {
+      "name": "Tell Jordan (step failed)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        1490
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({channel:$('Payment settings').first().json.config.jordanSlackId, text:'Whop payment '+($('Check').first().json.paymentId || 'unknown')+': a GHL or Slack step failed. Whop was already acknowledged. Repair the failed step in n8n; check completed steps before rerunning to avoid repeating onboarding.'}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack bot"
+        }
+      },
+      "id": "cdee986b-0626-429f-b677-a24d708109c0"
+    },
+    {
+      "name": "Read links",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1540,
+        1030
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/' + $('Check').first().json.ghl_contact_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": false,
+        "specifyBody": "json",
+        "jsonBody": "",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "GHL API key"
+        }
+      },
+      "id": "b773badf-d13c-41ce-b6bc-e44204e99ae8"
+    },
+    {
+      "name": "Other links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1760,
+        1030
+      ],
+      "parameters": {
+        "jsCode": "const c=$input.first().json.contact || {};\nconst cfg=$('Payment settings').first().json.config;\nconst raw=(c.customFields || []).find(f=>f.id===cfg.fields.planIds)?.value || '';\nconst ids=String(raw).split(',').map(s=>s.trim()).filter(s=>/^plan_[A-Za-z0-9]+$/.test(s));\nconst paid=$('Check').first().json.variantId;\nreturn [{json:{current:ids.includes(paid), ids}}];"
+      },
+      "id": "055993b6-ebaf-46e2-8597-4d513c5176b5"
+    },
+    {
+      "name": "Shut off other link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1980,
+        1030
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Payment settings').first().json.config.whopApiBase + '/variants/' + $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Api-Version-Date",
+              "value": "={{ $('Payment settings').first().json.config.whopApiVersion }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"stock\": 0, \"unlimited_stock\": false}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Whop API key"
+        }
+      },
+      "id": "82916965-2b4d-4a5c-8526-201e168b8932"
+    },
+    {
+      "name": "Tell Jordan (other link)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [
+        2200,
+        1030
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({channel:$('Payment settings').first().json.config.jordanSlackId, text:'Whop payment '+$('Check').first().json.paymentId+': current proposal links could not be verified or closed. If this is an older proposal, no paid tag was applied. Review the execution and reconcile the payment before changing GHL.'}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack bot"
+        }
+      },
+      "id": "f94e212d-f7f3-4321-8559-db5f81f36699"
+    },
+    {
+      "name": "Wire arrived?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        810
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "21c465f1-7a3e-4309-b699-898704f79f99",
+              "leftValue": "={{ $('Check').first().json.wire }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "66e8fec9-8a41-4404-942b-03e6b8f3584f"
+    },
+    {
+      "name": "Post wire to sales team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1540,
+        810
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({channel:$('Payment settings').first().json.config.salesChannelId, text:$('Check').first().json.matchText}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack bot"
+        }
+      },
+      "id": "c46dca95-5333-4f6b-ae6f-00b9c81fde9a"
+    },
+    {
+      "name": "Wire posted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        810
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "4dab3abe-cf36-48dd-a2fc-c46266476d30",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1a188935-2019-4485-a347-d22c7b9395c9"
+    },
+    {
+      "name": "Tell Jordan (crashed)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        1750
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Payment settings').first().json.config.jordanSlackId, text: 'Whop paid webhook crashed before it could read a delivery. A real payment may not have been announced. Check n8n.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack bot"
+        }
+      },
+      "id": "be7faf9a-99f4-427d-a8d6-a6a13a1bb39b"
+    },
+    {
+      "name": "Reject",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1570
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "89f8ea0b-9ce7-4b97-8640-0576fabbdb9f"
+    },
+    {
+      "name": "Crashed: tell Whop to retry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        1750
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "64f3dd06-3482-4d37-b2d2-b63b9a1a7a7b"
+    },
+    {
+      "name": "Payment settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1190
+      ],
+      "parameters": {
+        "jsCode": "// Existing account values from Jordan's source files. Confirm once before publishing.\nconst config = {\n  \"whopAccountId\": \"biz_HqBscEcuZxTgaf\",\n  \"whopApiBase\": \"https://api.whop.com/api/v1\",\n  \"whopApiVersion\": \"2026-10-27-2\",\n  \"source\": \"loudr-proposal-form\",\n  \"ghlLocationId\": \"gktSV83MhR3ONlsXR8E1\",\n  \"proposalTemplateId\": \"6ada95791e0a127d470a4671\",\n  \"salesChannelId\": \"C0CF61DBWAH\",\n  \"jordanSlackId\": \"U0C88NE4J01\",\n  \"reps\": {\n    \"Mason Church\": \"ivzu8RKbHlsOSOpIL75b\",\n    \"Jeremiah Iroff\": \"gnMespB8q9aIoKCdDQph\",\n    \"Bernardo Morales\": \"qxEHLNyaWd25HuOCVf21\"\n  },\n  \"fields\": {\n    \"leads\": \"JtC2OhwuyKEFcg3gRdMQ\",\n    \"costPerLead\": \"nRtSRFKX3QvzKnsIWVe0\",\n    \"state\": \"o3cPFq2wGsmg3uorv1fP\",\n    \"proposalDate\": \"Dttay90n1wvNTWv3SM1Q\",\n    \"firm\": \"OxQJUsmrUrDKsXLic5RO\",\n    \"cardUrl\": \"tBRdg5MX3J3OkZHlwV2K\",\n    \"bankUrl\": \"l1R4GFJqW505zK5HC9UZ\",\n    \"planIds\": \"MBbp3XDQyJm8i3wpdELD\",\n    \"bankTotal\": \"2dwbWrBDi16AH5ONeOI6\",\n    \"cardTotal\": \"kY52Raw2ixfXJtvSfJaV\",\n    \"rep\": \"L0pgltngVX8eSSh9jt2W\"\n  }\n};\nreturn $input.all().map(item => ({json: {...item.json, config}, ...(item.binary ? {binary:item.binary} : {})}));"
+      },
+      "id": "a8f51f90-b826-4009-8885-0cb890d9a2e9"
+    },
+    {
+      "name": "Current proposal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        1030
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b88cdea3-ffa3-4511-ae37-d45a1719d659",
+              "leftValue": "={{ $json.current }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ba7cc6f3-f8ec-4ab1-921b-1fa8497cd32a"
+    },
+    {
+      "name": "Plans to close",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        850
+      ],
+      "parameters": {
+        "jsCode": "return $('Other links').first().json.ids.map(id=>({json:{id}}));"
+      },
+      "id": "f4a0dfc0-9224-436a-a430-7b1405b2dbbc"
+    },
+    {
+      "name": "Remember payment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        1250
+      ],
+      "parameters": {
+        "jsCode": "const sd=$getWorkflowStaticData('global'); sd.seen=sd.seen || []; const key=$('Check').first().json.dedupeKey; if(!sd.seen.includes(key)) sd.seen.push(key); sd.seen=sd.seen.slice(-2000); return $input.all();"
+      },
+      "id": "4f2f3909-d01d-4e67-bab3-58ec1269c7c9"
+    },
+    {
+      "name": "START HERE",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -620
+      ],
+      "parameters": {
+        "content": "## Loudr website proposals: setup once\n1. Select GHL API key, Whop API key and Slack bot credentials (as before).\n2. On \"Loudr website\", create a Header Auth credential \"Loudr website secret\": Name = X-Loudr-Secret, Value = a long random secret.\n3. Confirm IDs in Proposal settings AND Payment settings. Rep names must match the site's TEAM_REP_NAMES.\n4. Paste the complete Whop ws_ signing secret in Sign. Put the card/wire fields in your GHL proposal.\n5. Publish. Put the production URL of \"Loudr website\" and the same secret in the site's Vercel settings.\nSee integrations/n8n/README.md in the site repo.",
+        "width": 620,
+        "height": 310
+      },
+      "id": "3ff52dbb-b458-4efe-bd80-86867fc703b9"
+    },
+    {
+      "name": "Proposal flow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        750,
+        -620
+      ],
+      "parameters": {
+        "content": "## 1 · Send a proposal (from the Loudr Team page)\nWebsite prices the deal from its rate card (any number of states, budget or lead count).\nSame steps as before: GHL contact → Whop card + wire links → save on contact → send proposal.\nReplies to the website with the signing link and both payment links. Old links (and links the closer generated) are retired only after GHL confirms sending.",
+        "width": 620,
+        "height": 310
+      },
+      "id": "8866aee6-da90-4fa7-add6-e491fc4bb3b2"
+    },
+    {
+      "name": "Payment flow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        750
+      ],
+      "parameters": {
+        "content": "## 2 · Receive payment\nVerify signature → match current proposal + amount → update GHL → notify Slack.\nDeposits, unmatched amounts and old links need manual review.\nWhop receives an early 200; later failures require repair in n8n.\nDuplicate history is lightweight (last 2,000 completed payments), not an atomic payment database.",
+        "width": 620,
+        "height": 310
+      },
+      "id": "b9348da8-60aa-42d3-811f-19f8934ff940"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "loudr-website-proposal",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Loudr website",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "eb311eee-2f3b-4435-8d34-bc6819560b7f",
+      "id": "cc4b5f5c-df46-4f45-810d-f74f45547597",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Loudr website secret"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Work out total": {
+      "main": [
+        [
+          {
+            "node": "Save on GHL contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save on GHL contact": {
+      "main": [
+        [
+          {
+            "node": "Read old links",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read old links": {
+      "main": [
+        [
+          {
+            "node": "Whop card link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whop card link": {
+      "main": [
+        [
+          {
+            "node": "Whop bank link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whop bank link": {
+      "main": [
+        [
+          {
+            "node": "Check links",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check links": {
+      "main": [
+        [
+          {
+            "node": "Save pay link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Old plan IDs": {
+      "main": [
+        [
+          {
+            "node": "Retire old link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save pay link": {
+      "main": [
+        [
+          {
+            "node": "Send proposal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send proposal": {
+      "main": [
+        [
+          {
+            "node": "Proposal sent?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retire old link": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Tell Jordan (old link)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposal settings": {
+      "main": [
+        [
+          {
+            "node": "Work out total",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposal sent?": {
+      "main": [
+        [
+          {
+            "node": "Sent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Old plan IDs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whop payment": {
+      "main": [
+        [
+          {
+            "node": "Payment settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read body": {
+      "main": [
+        [
+          {
+            "node": "Sign",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crashed: tell Whop to retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign": {
+      "main": [
+        [
+          {
+            "node": "Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crashed: tell Whop to retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check": {
+      "main": [
+        [
+          {
+            "node": "Genuine?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crashed: tell Whop to retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK to Whop": {
+      "main": [
+        [
+          {
+            "node": "Proposal payment?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wire arrived?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag contact": {
+      "main": [
+        [
+          {
+            "node": "Note on contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note on contact": {
+      "main": [
+        [
+          {
+            "node": "Post to sales team",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to sales team": {
+      "main": [
+        [
+          {
+            "node": "Posted?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject": {
+      "main": []
+    },
+    "Posted?": {
+      "main": [
+        [
+          {
+            "node": "Remember payment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Genuine?": {
+      "main": [
+        [
+          {
+            "node": "OK to Whop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wire arrived?": {
+      "main": [
+        [
+          {
+            "node": "Post wire to sales team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post wire to sales team": {
+      "main": [
+        [
+          {
+            "node": "Wire posted?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wire posted?": {
+      "main": [
+        [
+          {
+            "node": "Remember payment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposal payment?": {
+      "main": [
+        [
+          {
+            "node": "Read links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read links": {
+      "main": [
+        [
+          {
+            "node": "Other links",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (other link)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Other links": {
+      "main": [
+        [
+          {
+            "node": "Current proposal?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (other link)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shut off other link": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Tell Jordan (other link)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear old tag": {
+      "main": [
+        [
+          {
+            "node": "Tag contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (step failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crashed: tell Whop to retry": {
+      "main": [
+        [
+          {
+            "node": "Tell Jordan (crashed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payment settings": {
+      "main": [
+        [
+          {
+            "node": "Read body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current proposal?": {
+      "main": [
+        [
+          {
+            "node": "Clear old tag",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Plans to close",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell Jordan (other link)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plans to close": {
+      "main": [
+        [
+          {
+            "node": "Shut off other link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loudr website": {
+      "main": [
+        [
+          {
+            "node": "Proposal settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {}
+}

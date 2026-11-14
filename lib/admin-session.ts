@@ -15,6 +15,10 @@ export type AuthConfig = {
   redirectUri: string; authVersion: string; key: Uint8Array; secure: boolean; sessionCookie: string; flowCookie: string;
 };
 export type AdminSession = { userId: string; name: string | null };
+/** Where sign-in returns to. Only these fixed pages are allowed, never a URL from the request. */
+const RETURN_PAGES = { admin: "/admin", team: "/team" } as const;
+type ReturnPage = keyof typeof RETURN_PAGES;
+const returnPage = (value: unknown): ReturnPage => value === "team" ? "team" : "admin";
 
 export function getAuthConfig(): AuthConfig {
   const businessId = process.env.WHOP_ACCOUNT_ID;
@@ -127,7 +131,9 @@ export async function handleStart(request: Request): Promise<Response> {
     const verifier = randomBytes(48).toString("base64url");
     // Whop rejects an `openid` authorization request that carries no nonce.
     const nonce = randomBytes(24).toString("base64url");
-    const flow = await encrypt(config, { state, verifier }, FLOW_AUDIENCE, FLOW_SECONDS);
+    let next: ReturnPage = "admin";
+    try { next = returnPage((await request.formData()).get("next")); } catch { /* No form body: return to admin. */ }
+    const flow = await encrypt(config, { state, verifier, next }, FLOW_AUDIENCE, FLOW_SECONDS);
     const params = new URLSearchParams({
       response_type: "code", client_id: config.clientId, redirect_uri: config.redirectUri, scope: "openid profile",
       state, nonce, code_challenge: sha256Base64url(verifier), code_challenge_method: "S256",
@@ -184,41 +190,42 @@ export async function handleCallback(request: Request): Promise<Response> {
   let config: AuthConfig;
   try { config = getAuthConfig(); } catch { return unavailable(); }
   const clearFlow = cookie(config, config.flowCookie, "", 0);
-  const fail = (error: string) => redirect(`${config.siteOrigin}/admin/login?error=${error}`, clearFlow);
+  const fail = (error: string, next: ReturnPage = "admin") =>
+    redirect(`${config.siteOrigin}/admin/login?error=${error}${next === "team" ? "&next=team" : ""}`, clearFlow);
   const params = new URL(request.url).searchParams;
   const flowValue = readCookie(request.headers.get("cookie"), config.flowCookie);
   if (!flowValue) return fail("sign_in_expired");
-  let flow: { state: string; verifier: string };
+  let flow: { state: string; verifier: string; next: ReturnPage };
   try {
     const payload = await decrypt(config, flowValue, FLOW_AUDIENCE, FLOW_SECONDS);
     if (typeof payload.state !== "string" || typeof payload.verifier !== "string") return fail("sign_in_expired");
-    flow = { state: payload.state, verifier: payload.verifier };
+    flow = { state: payload.state, verifier: payload.verifier, next: returnPage(payload.next) };
   } catch { return fail("sign_in_expired"); }
   const returnedState = params.get("state");
-  if (!returnedState || params.getAll("state").length !== 1 || !sameSecret(returnedState, flow.state)) return fail("sign_in_expired");
+  if (!returnedState || params.getAll("state").length !== 1 || !sameSecret(returnedState, flow.state)) return fail("sign_in_expired", flow.next);
   const whopError = params.get("error");
   if (whopError) {
     // Only an explicit refusal is a cancellation; anything else is a request or configuration error.
     console.warn("Whop OAuth returned an error", { error: whopError.slice(0, 64), description: (params.get("error_description") ?? "").slice(0, 300) });
-    return fail(whopError === "access_denied" ? "whop_denied" : "sign_in_failed");
+    return fail(whopError === "access_denied" ? "whop_denied" : "sign_in_failed", flow.next);
   }
   const code = params.get("code");
-  if (!code || code.length > 2048 || params.getAll("code").length !== 1) return fail("sign_in_failed");
+  if (!code || code.length > 2048 || params.getAll("code").length !== 1) return fail("sign_in_failed", flow.next);
 
   let userId: string;
   try {
     const tokens = await exchangeCode(config, code, flow.verifier);
     try { userId = await fetchUserId(tokens.accessToken); }
     finally { await revoke(config, tokens.refreshToken); }
-  } catch { return fail("sign_in_failed"); }
+  } catch { return fail("sign_in_failed", flow.next); }
 
   let member;
   try { member = await findTeamMember(config.apiKey, config.businessId, userId); }
-  catch { return fail("unavailable"); }
-  if (!member) return fail("not_team_member");
+  catch { return fail("unavailable", flow.next); }
+  if (!member) return fail("not_team_member", flow.next);
   try {
-    return redirect(`${config.siteOrigin}/admin`, clearFlow, await createSessionCookie({ userId, name: member.name ?? member.username }));
-  } catch { return fail("unavailable"); }
+    return redirect(`${config.siteOrigin}${RETURN_PAGES[flow.next]}`, clearFlow, await createSessionCookie({ userId, name: member.name ?? member.username }));
+  } catch { return fail("unavailable", flow.next); }
 }
 
 /** POST /api/auth/logout */
