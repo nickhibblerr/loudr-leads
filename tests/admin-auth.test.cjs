@@ -266,3 +266,35 @@ test('missing or invalid configuration fails closed despite retired password set
     assert(!(await response.text()).includes('test-merchant-key'));
   }
 });
+
+test('sign-in started from the Team page returns there; any other destination falls back to admin', async () => {
+  const f = await fixture();
+  const begin = async (next) => {
+    const body = new URLSearchParams(next === undefined ? {} : { next });
+    const response = await f.session.handleStart(new Request(`${site}/api/auth/whop/start`, { method: 'POST', headers: { origin: site, 'content-type': 'application/x-www-form-urlencoded' }, body }));
+    return { flow: cookieValue(response, flowCookie), url: location(response) };
+  };
+  for (const [next, path] of [['team', '/team'], ['https://evil.example', '/admin'], ['//evil.example', '/admin'], [undefined, '/admin']]) {
+    const { flow, url } = await begin(next);
+    const response = await f.callback({ code: 'auth-code', state: url.searchParams.get('state') }, flow);
+    assert.equal(location(response).toString(), `${site}${path}`, String(next));
+  }
+  const { flow, url } = await begin('team');
+  f.state.members = [];
+  const refused = await f.callback({ code: 'auth-code', state: url.searchParams.get('state') }, flow);
+  assert.equal(location(refused).search, '?error=not_team_member&next=team');
+});
+
+test('the local sign-in bypass works only in local development, never in production or on Vercel', async () => {
+  const local = await fixture({ NODE_ENV: 'development', NEXT_PUBLIC_SITE_URL: 'http://localhost:3000', LOCAL_DEV_SIGN_IN: '1' });
+  assert.equal((await local.guard.getAdminAccess(null)).status, 'authorized');
+  for (const env of [
+    { NODE_ENV: 'production', LOCAL_DEV_SIGN_IN: '1' },
+    { NODE_ENV: 'development', NEXT_PUBLIC_SITE_URL: 'http://localhost:3000', LOCAL_DEV_SIGN_IN: '1', VERCEL: '1' },
+    { NODE_ENV: 'development', NEXT_PUBLIC_SITE_URL: 'https://loudr.example', LOCAL_DEV_SIGN_IN: '1' },
+    { NODE_ENV: 'development', NEXT_PUBLIC_SITE_URL: 'http://localhost:3000' },
+  ]) {
+    const f = await fixture(env);
+    assert.notEqual((await f.guard.getAdminAccess(null)).status, 'authorized', JSON.stringify(env));
+  }
+});

@@ -14,11 +14,39 @@ npm run build
 
 Open `http://localhost:3000`. Without payment environment variables, state selection, quantities, prices and guidance work; the payment step displays a setup message.
 
+## Testing the Team page locally
+
+Whop sign-in only works on the production URL, so local runs use a sign-in bypass that works only with `next dev` on localhost (never in production builds or on Vercel). Create `.env.local`:
+
+```sh
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+LOCAL_DEV_SIGN_IN=1
+N8N_PROPOSAL_WEBHOOK_URL=http://localhost:5679/webhook/loudr-website-proposal
+N8N_PROPOSAL_WEBHOOK_SECRET=local-test-secret-0123456789
+```
+
+Then run the mock n8n in one terminal (`node integrations/n8n/mock-webhook.mjs`; it prints each proposal and sends nothing anywhere) and `npm run dev` in another. Open `http://localhost:3000/team`. Without `WHOP_API_KEY`/`WHOP_ACCOUNT_ID`, **Generate link** returns fake `plan_LOCALMOCK…` links; add the real values to create real (unpaid) Whop links. `MOCK_FAIL=1` makes the mock answer "not sent" to see the error path.
+
 ## Lead pricing and guidance
 
 `lib/lead-pricing.ts` contains the initial rate card for all 50 states; saved admin prices and availability override it. California starts sold out. Presets are 1, 5, 10, 15 and 25 leads; custom whole-number quantities from 1 through 1,000 are supported. Guidance starts after a quantity is entered and progresses to green at 50 leads. It describes opportunity, not a promised conversion rate.
 
 The lead subtotal is the selected state's per-lead price multiplied by quantity. **Wire adds no fee. Card adds 3% of the subtotal**, rounded once to the nearest cent. For example, 5 Texas leads at $500 each cost $2,500 by wire or $2,575 by card, including a $75 card fee. The rate is `CARD_FEE_BASIS_POINTS` in `lib/payment-methods.ts`; the site reads its label from there. Receipts paid at the earlier 2.7% rate still verify. The fee and both totals appear before selecting a checkout, and the selected fee is repeated in the payment summary. All calculations use integer cents and are repeated on the server.
+
+## Team page: payment links and proposals
+
+`/team` (the **Team** button next to **Admin**) is for closers. It uses the same Whop sign-in as admin, so only joined Loudr Media team members can open it; sign-in started there returns to `/team`. Closers build a deal with the same order builder as the client page: any number of states, each set by **Budget** or **Leads**, with the 50-lead minimum and the current rate card.
+
+- **Generate link** (`POST /api/team/payment-link`) creates a Whop checkout link for exactly that order, Wire or Card (card includes the 3% fee). The link is a hidden one-time USD plan, and the page offers **Copy link**. If the deal changes afterwards, the link is marked stale until a new one is generated.
+- **Send Proposal** (`POST /api/team/proposal`) posts the client details and the site-priced order to the n8n proposal automation. n8n saves the GHL contact, creates the card and wire links, sends the GHL proposal document and replies with the signing link and both payment links, which the page shows with copy buttons. Links the closer generated on the page can be retired once the proposal is sent.
+
+Both routes require a team session and a same-origin JSON request, and price the order on the server. Setup and the webhook contract: [`integrations/n8n/README.md`](integrations/n8n/README.md). The workflow to import is `integrations/n8n/loudr-website-proposals.n8n.json`.
+
+| Variable | Purpose |
+| --- | --- |
+| `N8N_PROPOSAL_WEBHOOK_URL` | Production URL of the workflow's "Loudr website" webhook node. |
+| `N8N_PROPOSAL_WEBHOOK_SECRET` | Shared secret sent as `X-Loudr-Secret` (matches the n8n Header Auth credential). |
+| `TEAM_REP_NAMES` | Optional. Comma-separated rep names; must match `reps` in the n8n Proposal settings. |
 
 ## Payment configuration
 

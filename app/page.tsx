@@ -11,6 +11,7 @@ export default function Home() {
         <Brand />
         <nav className="site-header-actions" aria-label="Main navigation">
           <span className="header-note"><span className="status-dot" /> Client lead orders</span>
+          <a className="admin-entry-button" href="/team">Team</a>
           <a className="admin-entry-button" href="/admin">Admin</a>
           <ThemeToggle />
         </nav>

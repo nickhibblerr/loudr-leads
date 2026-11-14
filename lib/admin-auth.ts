@@ -22,7 +22,19 @@ async function isTeamMember(apiKey: string, businessId: string, userId: string):
   return member;
 }
 
+/**
+ * Local testing only: `LOCAL_DEV_SIGN_IN=1` with `next dev` skips Whop sign-in so Team and
+ * Admin can be tried on localhost. Production builds (NODE_ENV=production, which includes
+ * Vercel previews) never honour it.
+ */
+function localDevSignIn(): boolean {
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL || process.env.LOCAL_DEV_SIGN_IN !== "1") return false;
+  try { return ["localhost", "127.0.0.1"].includes(new URL(process.env.NEXT_PUBLIC_SITE_URL || "").hostname); }
+  catch { return false; }
+}
+
 export async function getAdminAccess(cookieHeader: string | null): Promise<AdminAccess> {
+  if (localDevSignIn()) return { status: "authorized", userId: "user_localdev", name: process.env.LOCAL_DEV_NAME || "Local tester" };
   if (!authConfigured()) return { status: "unavailable" };
   const session = await readAdminSession(cookieHeader);
   if (!session) return { status: "unauthenticated" };
@@ -33,23 +45,25 @@ export async function getAdminAccess(cookieHeader: string | null): Promise<Admin
   return { status: "authorized", userId: session.userId, name: session.name };
 }
 
-export async function requireAdmin(request: Request): Promise<Response | null> {
+/** Admin and the team (closer) tools share one sign-in: joined Loudr Media team members on Whop. */
+export async function requireAdmin(request: Request, area: "admin" | "team tools" = "admin"): Promise<Response | null> {
   const access = await getAdminAccess(request.headers.get("cookie"));
   if (access.status === "authorized") return null;
   const status = access.status === "unauthenticated" ? 401 : access.status === "forbidden" ? 403 : 503;
-  const error = access.status === "unauthenticated" ? "Sign in to access admin." : access.status === "forbidden" ?
-    "Only Loudr Media team members can access admin." : "Admin access is temporarily unavailable. Please try again.";
+  const label = area === "admin" ? "Admin" : "Team tools";
+  const error = access.status === "unauthenticated" ? `Sign in to access ${area}.` : access.status === "forbidden" ?
+    `Only Loudr Media team members can access ${area}.` : `${label} access is temporarily unavailable. Please try again.`;
   return Response.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export function checkMutationOrigin(request: Request): Response | null {
+export function checkMutationOrigin(request: Request, message = "Save prices from this site's admin page."): Response | null {
   let siteOrigin: string;
-  try { siteOrigin = getAuthConfig().siteOrigin; }
+  try { siteOrigin = localDevSignIn() ? new URL(process.env.NEXT_PUBLIC_SITE_URL!).origin : getAuthConfig().siteOrigin; }
   catch { return Response.json({ error: "Admin access is temporarily unavailable." }, { status: 503, headers: { "Cache-Control": "no-store" } }); }
   const origin = request.headers.get("origin");
   const contentType = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (origin !== siteOrigin || contentType !== "application/json") {
-    return Response.json({ error: "Save prices from this site's admin page." }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    return Response.json({ error: message }, { status: 403, headers: { "Cache-Control": "no-store" } });
   }
   return null;
 }

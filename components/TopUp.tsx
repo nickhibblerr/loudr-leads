@@ -5,12 +5,12 @@ import { loadWhop } from "@whop/elements";
 import { Checkout, CheckoutElement, WhopElements } from "@whop/elements-react";
 import { ArrowIcon, LockIcon } from "@/components/Icons";
 import { formatAmount } from "@/lib/top-up";
-import { MAX_LEAD_QUANTITY, MIN_LEAD_QUANTITY } from "@/lib/lead-pricing";
-import { calculateCartQuote, cartMetadata, leadsForBudget, MAX_CART_STATES, type CartQuote } from "@/lib/lead-cart";
-import { isValidLeadCount, type OrderMode } from "@/lib/leads";
+import { calculateCartQuote, cartMetadata, MAX_CART_STATES, type CartQuote } from "@/lib/lead-cart";
+import type { OrderMode } from "@/lib/leads";
+import { amountError, convertedValue, leadCountFor, leadsLabel, newOrderLine as newLine, stateErrorFor, type OrderLine as Line } from "@/lib/order-lines";
 import { clearSavedCart, readSavedCart, writeSavedCart } from "@/lib/saved-cart";
 import LeadSelector from "@/components/LeadSelector";
-import type { RateCard, RateState } from "@/lib/rate-card";
+import type { RateCard } from "@/lib/rate-card";
 import type { LeadCheckoutItem } from "@/lib/lead-checkout";
 import { CARD_FEE_LABEL, type PaymentMode } from "@/lib/payment-methods";
 import { currentTheme, THEME_EVENT, type Theme } from "@/lib/theme";
@@ -18,43 +18,6 @@ import { currentTheme, THEME_EVENT, type Theme } from "@/lib/theme";
 const appearanceFor = (theme: Theme) => ({
   theme: { appearance: theme, accentColor: "yellow" as const, grayColor: "gray" as const },
 });
-
-/** One state in the order. `value` is a lead count, or whole dollars of lead spend in budget mode. */
-type Line = { id: string; state: string; value: string; mode: OrderMode };
-let lineSequence = 0;
-const newLine = (state = "", value = "", mode: OrderMode = "budget"): Line => ({ id: `line-${++lineSequence}`, state, value, mode });
-
-/** The lead count a line orders, or null when it can't be worked out yet. */
-function leadCountFor(line: Line, rate: RateState | undefined): number | null {
-  const entered = Number(line.value);
-  if (!line.value.trim() || !Number.isSafeInteger(entered) || entered < 1) return null;
-  if (line.mode === "leads") return entered;
-  return rate?.price ? leadsForBudget(entered, rate.price)?.leadCount ?? null : null;
-}
-
-function amountError(line: Line, rate: RateState | undefined): string | null {
-  const entered = Number(line.value);
-  if (line.mode === "leads") {
-    if (!line.value.trim()) return "Choose how many leads you’d like.";
-    if (!isValidLeadCount(entered)) return "Enter a whole number of leads.";
-    if (entered < MIN_LEAD_QUANTITY) return `The minimum order is ${MIN_LEAD_QUANTITY} leads per state.`;
-    if (entered > MAX_LEAD_QUANTITY) return `Choose up to ${MAX_LEAD_QUANTITY.toLocaleString("en-US")} leads for this state.`;
-    return null;
-  }
-  if (!line.value.trim()) return "Enter your lead budget.";
-  if (!Number.isSafeInteger(entered) || entered < 1) return "Enter your budget in whole dollars.";
-  if (!rate?.price) return null; // The state error explains what's missing.
-  const count = leadCountFor(line, rate) ?? 0;
-  if (count < MIN_LEAD_QUANTITY) return `The minimum is ${MIN_LEAD_QUANTITY} leads — ${formatAmount(MIN_LEAD_QUANTITY * rate.price)} for ${rate.name}.`;
-  if (count > MAX_LEAD_QUANTITY) return `That budget covers more than ${MAX_LEAD_QUANTITY.toLocaleString("en-US")} leads. The most for ${rate.name} is ${formatAmount(MAX_LEAD_QUANTITY * rate.price)}.`;
-  return null;
-}
-
-function stateErrorFor(line: Line, rate: RateState | undefined): string | null {
-  if (!line.state || !rate) return "Choose a state to see your price.";
-  if (rate.price === null) return `${rate.name} is sold out. Please choose another state or remove it.`;
-  return null;
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
@@ -188,11 +151,7 @@ export default function TopUp() {
 
   // Switching between leads and budget keeps the same order where it can.
   function changeMode(mode: OrderMode) {
-    const rate = selectedState;
-    const count = leadCountFor(active, rate);
-    let value = "";
-    if (mode === "budget" && count && rate?.price) value = String(Math.ceil(count * rate.price));
-    if (mode === "leads" && count) value = String(count);
+    const value = convertedValue(active, selectedState, mode);
     updateActive({ mode, value });
     setTouched(Boolean(value));
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -325,7 +284,6 @@ export default function TopUp() {
   }
 
 
-  const leadsLabel = (count: number) => `${count.toLocaleString("en-US")} ${count === 1 ? "lead" : "leads"}`;
 
   return (
     <WhopElements elements={elements} appearance={appearance} onLoadError={(_error, retry) => setLoadError({ retry })}>

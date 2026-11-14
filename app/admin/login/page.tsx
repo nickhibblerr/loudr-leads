@@ -21,8 +21,9 @@ const messages: Record<string, string> = {
 export default async function AdminLogin({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const configured = authConfigured();
   const access = await getAdminAccess((await headers()).get("cookie"));
-  if (access.status === "authorized") redirect("/admin");
   const params = await searchParams;
+  const team = params.next === "team";
+  if (access.status === "authorized") redirect(team ? "/team" : "/admin");
   const error = typeof params.error === "string" && Object.prototype.hasOwnProperty.call(messages, params.error) ? messages[params.error] : undefined;
   const accessMessage = !configured || access.status === "unavailable" ? messages.unavailable : undefined;
   return (
@@ -32,12 +33,14 @@ export default async function AdminLogin({ searchParams }: { searchParams: Promi
       <main id="admin-sign-in" className="admin-auth-main">
         <section className="admin-access-panel" aria-labelledby="sign-in-heading">
           <p className="eyebrow"><span className="eyebrow-line" /> Loudr Media</p>
-          <h1 id="sign-in-heading">Admin sign-in<span className="accent-text">.</span></h1>
-          <p>Sign in with your Whop account. Only Loudr Media team members can manage state pricing.</p>
+          <h1 id="sign-in-heading">{team ? "Team sign-in" : "Admin sign-in"}<span className="accent-text">.</span></h1>
+          <p>{team ? "Sign in with your Whop account. Only Loudr Media team members can build payment links and send proposals." :
+            "Sign in with your Whop account. Only Loudr Media team members can manage state pricing."}</p>
           {(error || accessMessage) && <p className="form-error" role="alert">{error || accessMessage}</p>}
           {configured ? <form action="/api/auth/whop/start" method="post" className="admin-login-form">
+            {team && <input type="hidden" name="next" value="team" />}
             <button type="submit" className="primary-button">Sign in with Whop</button>
-          </form> : <a href="/admin/login" className="admin-secondary">Try again</a>}
+          </form> : <a href={team ? "/admin/login?next=team" : "/admin/login"} className="admin-secondary">Try again</a>}
         </section>
       </main>
       <footer className="site-footer"><span>© {new Date().getFullYear()} LOUDR Media</span><span>Admin access</span></footer>
